@@ -1,0 +1,83 @@
+// Runs the real command against the example app in a throwaway repository with two
+// commits: the app before the fix, and after it. Needs Chromium for Playwright.
+import assert from "node:assert/strict";
+import { execFileSync, spawnSync } from "node:child_process";
+import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { after, before, test } from "node:test";
+import { fileURLToPath } from "node:url";
+
+const packageRoot = fileURLToPath(new URL("..", import.meta.url));
+const bin = join(packageRoot, "bin/acceptance-check.mjs");
+// Inside the package, so the specs resolve @playwright/test from its node_modules.
+const project = join(packageRoot, "test/.tmp", `e2e-${process.pid}`);
+const git = (...args) => execFileSync("git", ["-c", "user.name=test", "-c", "user.email=test@example.invalid", ...args], { cwd: project, encoding: "utf8" }).trim();
+const cli = (...args) => spawnSync(process.execPath, [bin, ...args], { cwd: project, encoding: "utf8", timeout: 240_000 });
+const server = join(project, "app/server.mjs");
+let before_, after_;
+
+before(() => {
+  rmSync(project, { recursive: true, force: true });
+  mkdirSync(project, { recursive: true });
+  cpSync(join(packageRoot, "example"), project, { recursive: true });
+  writeFileSync(join(project, ".gitignore"), ".acceptance/\n");
+  const fixed = readFileSync(server, "utf8");
+  writeFileSync(server, fixed.replace("const REJECT_BLANK = true;", "const REJECT_BLANK = false;"));
+  git("init", "-q", "-b", "main");
+  git("add", ".");
+  git("commit", "-q", "-m", "before the fix");
+  before_ = git("rev-parse", "HEAD");
+  writeFileSync(server, fixed);
+  git("commit", "-q", "-am", "reject blank names");
+  after_ = git("rev-parse", "HEAD");
+});
+
+after(() => rmSync(project, { recursive: true, force: true }));
+
+const report = (output) => {
+  const path = output.match(/Report (\S+report\.md)/)?.[1];
+  assert.ok(path, `a report was written:\n${output}`);
+  return readFileSync(join(project, path), "utf8");
+};
+
+test("a fix is met against the base before it, and the other criterion still holds", () => {
+  const run = cli("verify", `--base=${before_}`, "tests/blank-name.spec.ts");
+  assert.equal(run.status, 0, run.stdout + run.stderr);
+  const md = report(run.stdout);
+  assert.match(md, /A blank name shows "Enter a name for the item\." and saves nothing \| New \| Fail \| Pass \| ✅ Met/);
+  assert.match(md, /A real name is trimmed and added to the list \| Must still hold \| Pass \| Pass \| ✅ Still holds/);
+  assert.match(md, new RegExp(`base \`${before_.slice(0, 7)}\`, with an empty list`));
+  const run2 = run.stdout.match(/Run folder (\S+)/)[1];
+  assert.ok(existsSync(join(project, run2, "head/results")), "evidence was kept");
+});
+
+test("a test that also passes on the base is reported as not proven", () => {
+  const run = cli("verify", `--base=${after_}`, "--skip-build", "tests/blank-name.spec.ts");
+  assert.equal(run.status, 2, run.stdout + run.stderr);
+  assert.match(report(run.stdout), /❌ Not proven: also passes on base/);
+});
+
+test("a criterion without a test is reported, and the base build is reused", () => {
+  const criteria = join(project, ".acceptance", "criteria.json");
+  mkdirSync(join(project, ".acceptance"), { recursive: true });
+  writeFileSync(criteria, JSON.stringify(['A blank name shows "Enter a name for the item." and saves nothing', "The list shows how many items there are"]));
+  const run = cli("verify", `--base=${before_}`, "--skip-build", `--criteria=${criteria}`, "tests/blank-name.spec.ts");
+  assert.equal(run.status, 2, run.stdout + run.stderr);
+  assert.match(run.stdout, /Reusing base build/);
+  const md = report(run.stdout);
+  assert.match(md, /The list shows how many items there are \|  \| Not run \| No test \| ❌ No test written/);
+  assert.match(md, /Every criterion in the pull request description is listed above\./);
+});
+
+test("a missing config gives a clear error and init writes the starting files", () => {
+  const empty = join(project, "..", `init-${process.pid}`);
+  rmSync(empty, { recursive: true, force: true });
+  mkdirSync(empty);
+  const verify = spawnSync(process.execPath, [bin, "verify", "x.spec.ts"], { cwd: empty, encoding: "utf8" });
+  assert.equal(verify.status, 1);
+  assert.match(verify.stderr, /No acceptance\.config\.mjs .*Run `acceptance-check init`/);
+  const init = spawnSync(process.execPath, [bin, "init"], { cwd: empty, encoding: "utf8" });
+  assert.equal(init.status, 0, init.stderr);
+  for (const file of ["acceptance.config.mjs", "docs/acceptance-notes.md", "tests/acceptance/fixtures.ts"]) assert.ok(existsSync(join(empty, file)), file);
+  rmSync(empty, { recursive: true, force: true });
+});
