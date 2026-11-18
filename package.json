@@ -1,0 +1,24 @@
+{
+  "name": "acceptance-check",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Check a pull request's acceptance criteria in a real browser against the change and its base, and let an agent write the tests.",
+  "type": "module",
+  "bin": {
+    "acceptance-check": "bin/acceptance-check.mjs"
+  },
+  "files": ["bin", "src", "skill", "templates"],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.mjs"
+  },
+  "peerDependencies": {
+    "@playwright/test": ">=1.40.0"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.63.0"
+  },
+  "license": "UNLICENSED"
+}
