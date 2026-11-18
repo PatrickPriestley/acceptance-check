@@ -9,6 +9,7 @@ const page = () => `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><title>Shopping list</title></head>
 <body>
   <h1>Shopping list</h1>
+  <p role="status">${items.length} ${items.length === 1 ? "item" : "items"}</p>
   <section aria-label="Items"><ul>${items.map((item) => `<li>${item.replace(/[<&]/g, (c) => `&#${c.charCodeAt(0)};`)}</li>`).join("")}</ul></section>
   <form aria-label="Add item">
     <p id="message" role="alert" hidden></p>
