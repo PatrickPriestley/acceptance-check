@@ -24,7 +24,7 @@ A criterion for new behaviour counts as met only when its test **fails on the ba
 ## Set up an app
 
 ```bash
-npm install --save-dev github:PatrickPriestley/acceptance-check#v0.1.0 @playwright/test
+npm install --save-dev github:PatrickPriestley/acceptance-check#v0.2.0 @playwright/test
 npx playwright install chromium
 npx acceptance-check init
 ```
@@ -86,6 +86,56 @@ export default {
 ```
 
 Commands are arrays and never run through a shell. In `start.env`, `{port}` is a free port and `{data}` a fresh folder for each copy. Nothing else from the environment reaches the app, so database URLs and credentials stay out. The base runs with this checkout's config.
+
+## Run it on pull requests
+
+Two reusable workflows do the work. In the app's repository, add `.github/workflows/acceptance.yml`:
+
+```yaml
+name: Acceptance criteria
+on:
+  pull_request:
+    paths: ["tests/acceptance/**"]
+permissions:
+  contents: read
+  pull-requests: write
+jobs:
+  acceptance:
+    uses: PatrickPriestley/acceptance-check/.github/workflows/acceptance.yml@v0.2.0
+```
+
+It checks the specs the pull request adds or changes against the pull request's base, uploads the videos and traces, and keeps one comment on the pull request up to date. When the description has an `## Acceptance criteria` list, every criterion is reported, including those without a test. An `Acceptance base: <commit hash>` line in the description compares against another commit.
+
+To have the agent write tests when a label is added, add `.github/workflows/acceptance-agent.yml` and an `ANTHROPIC_API_KEY` repository secret:
+
+```yaml
+name: Acceptance test writer
+on:
+  pull_request:
+    types: [labeled]
+permissions:
+  contents: write
+  pull-requests: write
+jobs:
+  write:
+    uses: PatrickPriestley/acceptance-check/.github/workflows/acceptance-agent.yml@v0.2.0
+    secrets:
+      anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
+```
+
+Adding the `write-acceptance-tests` label runs it. It writes `tests/acceptance/pr-<number>.spec.ts`, commits it to the pull request branch, posts the verdicts and removes the label. A commit that a workflow pushes does not start other workflows, so its comment is the result for that commit.
+
+| Input | Default | Use |
+|---|---|---|
+| `working-directory` | `.` | The folder with `acceptance.config.mjs` |
+| `install` | `npm ci` | `pnpm install --frozen-lockfile`, `yarn install --immutable`, and so on. pnpm and yarn are enabled through corepack |
+| `browsers` | `npx playwright install --with-deps chromium` | |
+| `command` | `npx acceptance-check` | `pnpm exec acceptance-check`, for example |
+| `spec-dir` | `tests/acceptance` | The config's `specDir` |
+| `node-version` | `22` | |
+| `label`, `model`, `max-budget-usd` | `write-acceptance-tests`, Claude Code's default, `8` | Agent workflow only |
+
+Both skip pull requests from forks, which get no secrets and a read-only token. While this repository is private, its workflows can be called only from your own repositories, and only after you allow it under Settings, Actions, General, Access.
 
 ## Let an agent write the tests
 
