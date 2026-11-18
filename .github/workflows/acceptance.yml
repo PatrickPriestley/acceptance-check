@@ -1,6 +1,8 @@
 name: Acceptance criteria
 # Reusable. Checks the acceptance specs a pull request adds or changes against the
-# pull request's base, uploads videos and traces, and posts one comment.
+# pull request's base, uploads videos and traces, and posts one comment. With
+# when-no-spec-changed: all, a pull request that changes no spec checks every spec,
+# so a change to the checker, its version or the app's config is still tested.
 #
 #   on:
 #     pull_request:
@@ -32,9 +34,13 @@ on:
         type: string
         default: npx acceptance-check
       spec-dir:
-        description: The config's specDir, relative to working-directory.
+        description: Not used since v0.4.0, which reads specDir from the config. Kept so existing callers still work.
         type: string
         default: tests/acceptance
+      when-no-spec-changed:
+        description: "skip: check nothing when the pull request changes no spec. all: check every spec."
+        type: string
+        default: skip
 jobs:
   acceptance:
     # Fork pull requests get a read-only token and no secrets, so they cannot comment.
@@ -60,12 +66,17 @@ jobs:
         env:
           PR_BODY: ${{ github.event.pull_request.body }}
           PR_BASE: ${{ github.event.pull_request.base.sha }}
-          SPEC_DIR: ${{ inputs.spec-dir }}
+          WHEN_NONE: ${{ inputs.when-no-spec-changed }}
           CHECK: ${{ inputs.command }}
         run: |
           mkdir -p .acceptance
           printf '%s\n' "$PR_BODY" > .acceptance/pr-body.md
-          specs=$(git diff --name-only --relative --diff-filter=AM "$PR_BASE" HEAD -- "$SPEC_DIR" | grep '\.spec\.ts$' | tr '\n' ' ' || true)
+          case "$WHEN_NONE" in
+            skip) all="" ;;
+            all) all="--all-when-none" ;;
+            *) echo "::error::when-no-spec-changed must be skip or all, not '$WHEN_NONE'"; exit 1 ;;
+          esac
+          specs=$($CHECK specs --base="$PR_BASE" $all | tr '\n' ' ')
           $CHECK criteria .acceptance/pr-body.md > .acceptance/pr-criteria.json
           criteria=""
           if [ "$(tr -d '[:space:]' < .acceptance/pr-criteria.json)" != "[]" ]; then criteria="--criteria=.acceptance/pr-criteria.json"; fi
