@@ -1,0 +1,108 @@
+name: Acceptance criteria
+# Reusable. Checks the acceptance specs a pull request adds or changes against the
+# pull request's base, uploads videos and traces, and posts one comment.
+#
+#   on:
+#     pull_request:
+#       paths: ["tests/acceptance/**"]
+#   permissions: { contents: read, pull-requests: write }
+#   jobs:
+#     acceptance:
+#       uses: PatrickPriestley/acceptance-check/.github/workflows/acceptance.yml@<tag>
+on:
+  workflow_call:
+    inputs:
+      working-directory:
+        description: Folder that holds acceptance.config.mjs, relative to the repository root.
+        type: string
+        default: "."
+      node-version:
+        type: string
+        default: "22"
+      install:
+        description: Installs the project's dependencies, acceptance-check included.
+        type: string
+        default: npm ci
+      browsers:
+        description: Installs the browser Playwright needs.
+        type: string
+        default: npx playwright install --with-deps chromium
+      command:
+        description: Runs acceptance-check.
+        type: string
+        default: npx acceptance-check
+      spec-dir:
+        description: The config's specDir, relative to working-directory.
+        type: string
+        default: tests/acceptance
+jobs:
+  acceptance:
+    # Fork pull requests get a read-only token and no secrets, so they cannot comment.
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: ${{ inputs.working-directory }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ inputs.node-version }}
+      - name: Enable pnpm and yarn
+        run: corepack enable
+      - run: ${{ inputs.install }}
+      - run: ${{ inputs.browsers }}
+      - name: Choose specs, criteria and base
+        id: plan
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          SPEC_DIR: ${{ inputs.spec-dir }}
+          CHECK: ${{ inputs.command }}
+        run: |
+          mkdir -p .acceptance
+          printf '%s\n' "$PR_BODY" > .acceptance/pr-body.md
+          specs=$(git diff --name-only --relative --diff-filter=AM "$PR_BASE" HEAD -- "$SPEC_DIR" | grep '\.spec\.ts$' | tr '\n' ' ' || true)
+          $CHECK criteria .acceptance/pr-body.md > .acceptance/pr-criteria.json
+          criteria=""
+          if [ "$(tr -d '[:space:]' < .acceptance/pr-criteria.json)" != "[]" ]; then criteria="--criteria=.acceptance/pr-criteria.json"; fi
+          # An "Acceptance base: <hash>" line compares against another commit, for
+          # criteria written after their change merged. Only a commit hash is accepted.
+          override=$(sed -n 's/^Acceptance base: *\([0-9a-f]\{7,40\}\) *$/\1/p' .acceptance/pr-body.md | head -1)
+          {
+            echo "specs=$specs"
+            echo "criteria=$criteria"
+            echo "base=${override:-$PR_BASE}"
+          } >> "$GITHUB_OUTPUT"
+      - name: Check criteria on this change and on the base
+        id: verify
+        if: steps.plan.outputs.specs != ''
+        continue-on-error: true
+        env:
+          CHECK: ${{ inputs.command }}
+        run: $CHECK verify --base=${{ steps.plan.outputs.base }} ${{ steps.plan.outputs.criteria }} ${{ steps.plan.outputs.specs }}
+      - name: Upload videos, traces and screenshots
+        id: artifact
+        if: steps.plan.outputs.specs != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: acceptance-${{ github.event.pull_request.number }}-${{ github.run_attempt }}
+          path: ${{ inputs.working-directory }}/.acceptance/runs/
+          include-hidden-files: true
+          if-no-files-found: warn
+          retention-days: 30
+      - name: Comment on the pull request
+        if: steps.plan.outputs.specs != ''
+        env:
+          CHECK: ${{ inputs.command }}
+          GITHUB_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          ARTIFACT_URL: ${{ steps.artifact.outputs.artifact-url }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: $CHECK comment --post "${{ steps.verify.outputs.report }}"
+      - name: Fail when a criterion is not met
+        if: steps.verify.outcome == 'failure'
+        run: exit 1

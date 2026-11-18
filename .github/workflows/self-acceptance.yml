@@ -1,0 +1,22 @@
+name: Acceptance (example)
+# Runs the reusable acceptance workflow against example/, so a pull request that
+# changes the workflow, the engine or an example spec proves the whole path.
+on:
+  pull_request:
+    paths:
+      - "example/**"
+      - "src/**"
+      - "bin/**"
+      - ".github/workflows/acceptance.yml"
+      - ".github/workflows/self-acceptance.yml"
+permissions:
+  contents: read
+  pull-requests: write
+jobs:
+  example:
+    uses: ./.github/workflows/acceptance.yml
+    with:
+      working-directory: example
+      install: npm ci --prefix ..
+      command: node ../bin/acceptance-check.mjs
+      spec-dir: tests

@@ -1,0 +1,131 @@
+name: Acceptance test writer
+# Reusable. When the label is added to a pull request whose description has an
+# "## Acceptance criteria" list, an agent writes <spec-dir>/pr-<number>.spec.ts,
+# a separate run checks it, the spec is committed to the pull request branch, and
+# the verdicts and recordings are posted on the pull request.
+#
+#   on:
+#     pull_request:
+#       types: [labeled]
+#   permissions: { contents: write, pull-requests: write }
+#   jobs:
+#     write:
+#       uses: PatrickPriestley/acceptance-check/.github/workflows/acceptance-agent.yml@<tag>
+#       secrets:
+#         anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
+on:
+  workflow_call:
+    inputs:
+      label:
+        description: The label that starts the agent. It is removed afterwards, so it can be added again.
+        type: string
+        default: write-acceptance-tests
+      working-directory:
+        type: string
+        default: "."
+      node-version:
+        type: string
+        default: "22"
+      install:
+        type: string
+        default: npm ci
+      browsers:
+        type: string
+        default: npx playwright install --with-deps chromium
+      command:
+        type: string
+        default: npx acceptance-check
+      spec-dir:
+        type: string
+        default: tests/acceptance
+      model:
+        description: Claude model for the agent. Empty uses Claude Code's default.
+        type: string
+        default: ""
+      max-budget-usd:
+        type: string
+        default: "8"
+    secrets:
+      anthropic-api-key:
+        required: true
+jobs:
+  write:
+    # Fork pull requests get no secrets and a read-only token.
+    if: github.event.label.name == inputs.label && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    defaults:
+      run:
+        working-directory: ${{ inputs.working-directory }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ inputs.node-version }}
+      - name: Enable pnpm and yarn
+        run: corepack enable
+      - run: ${{ inputs.install }}
+      - run: ${{ inputs.browsers }}
+      - run: npm install --global @anthropic-ai/claude-code
+      - name: Read the description
+        id: plan
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          mkdir -p .acceptance
+          printf '%s\n' "$PR_BODY" > .acceptance/pr-body.md
+          override=$(sed -n 's/^Acceptance base: *\([0-9a-f]\{7,40\}\) *$/\1/p' .acceptance/pr-body.md | head -1)
+          echo "base=${override:-$PR_BASE}" >> "$GITHUB_OUTPUT"
+      - name: Write and check acceptance tests
+        id: write
+        continue-on-error: true
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.anthropic-api-key }}
+          CHECK: ${{ inputs.command }}
+          MODEL: ${{ inputs.model }}
+        run: >
+          $CHECK write --body=.acceptance/pr-body.md --base=${{ steps.plan.outputs.base }}
+          --spec=${{ inputs.spec-dir }}/pr-${{ github.event.pull_request.number }}.spec.ts
+          --max-budget-usd=${{ inputs.max-budget-usd }} ${MODEL:+--model=$MODEL}
+      - name: Commit the spec to the pull request
+        if: steps.write.outputs.spec != ''
+        run: |
+          git add "${{ steps.write.outputs.spec }}"
+          if git diff --cached --quiet; then exit 0; fi
+          git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+            commit -m "test: add acceptance tests written from the pull request criteria"
+          git push origin "HEAD:${{ github.event.pull_request.head.ref }}"
+      - name: Upload videos, traces, screenshots and the agent log
+        id: artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: acceptance-agent-${{ github.event.pull_request.number }}-${{ github.run_attempt }}
+          path: |
+            ${{ inputs.working-directory }}/.acceptance/runs/
+            ${{ inputs.working-directory }}/.acceptance/agent/
+          include-hidden-files: true
+          if-no-files-found: warn
+          retention-days: 30
+      - name: Comment on the pull request
+        if: always()
+        env:
+          CHECK: ${{ inputs.command }}
+          GITHUB_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          ARTIFACT_URL: ${{ steps.artifact.outputs.artifact-url }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: $CHECK comment --post "${{ steps.write.outputs.report }}"
+      - name: Remove the label so it can be added again
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          LABEL: ${{ inputs.label }}
+        run: gh pr edit ${{ github.event.pull_request.number }} --remove-label "$LABEL" || true
+      - name: Fail when a criterion is not met
+        if: steps.write.outcome == 'failure'
+        run: exit 1
