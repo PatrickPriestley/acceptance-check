@@ -21,10 +21,26 @@ A criterion for new behaviour counts as met only when its test **fails on the ba
 | No test written | A criterion in the list has no test |
 | Not verifiable here | The test is skipped with an `unverifiable` annotation and a reason |
 
+## Install the skills as a plugin
+
+The two skills, `verify-acceptance` and `set-up-acceptance-check`, also ship as a plugin, so an agent can set up and run checks without copying files into each project.
+
+Claude Code:
+
+```
+/plugin install acceptance-check --marketplace PatrickPriestley/acceptance-check
+```
+
+or, from a shell, `claude plugin marketplace add PatrickPriestley/acceptance-check` then `claude plugin install acceptance-check@acceptance-check`.
+
+Cursor: the manifest is `.cursor-plugin/plugin.json`, with `.cursor-plugin/marketplace.json` at the root, the same layout as Cursor's own plugin repository. Install from `https://github.com/PatrickPriestley/acceptance-check` where your Cursor version adds plugins from a repository. This layout is checked against Cursor's schemas but has not yet been installed in Cursor.
+
+The plugin carries the skills only. Each app still needs the npm package (below), because the checks run with the app's own Playwright. Ask the agent to "set up acceptance-check" and the setup skill walks through the rest.
+
 ## Set up an app
 
 ```bash
-npm install --save-dev github:PatrickPriestley/acceptance-check#v0.2.0 @playwright/test
+npm install --save-dev github:PatrickPriestley/acceptance-check#v0.3.0 @playwright/test
 npx playwright install chromium
 npx acceptance-check init
 ```
@@ -101,7 +117,7 @@ permissions:
   pull-requests: write
 jobs:
   acceptance:
-    uses: PatrickPriestley/acceptance-check/.github/workflows/acceptance.yml@v0.2.0
+    uses: PatrickPriestley/acceptance-check/.github/workflows/acceptance.yml@v0.3.0
 ```
 
 It checks the specs the pull request adds or changes against the pull request's base, uploads the videos and traces, and keeps one comment on the pull request up to date. When the description has an `## Acceptance criteria` list, every criterion is reported, including those without a test. An `Acceptance base: <commit hash>` line in the description compares against another commit.
@@ -118,7 +134,7 @@ permissions:
   pull-requests: write
 jobs:
   write:
-    uses: PatrickPriestley/acceptance-check/.github/workflows/acceptance-agent.yml@v0.2.0
+    uses: PatrickPriestley/acceptance-check/.github/workflows/acceptance-agent.yml@v0.3.0
     secrets:
       anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
 ```
@@ -142,7 +158,7 @@ Both skip pull requests from forks, which get no secrets and a read-only token. 
 `acceptance-check write` needs Claude Code (`npm i -g @anthropic-ai/claude-code`) and an Anthropic API key.
 
 1. It reads the criteria and builds this change and the base.
-2. A Claude Code agent writes one test per criterion, following `skill/verify-acceptance/SKILL.md` and your notes, and checks its work.
+2. A Claude Code agent writes one test per criterion, following `skills/verify-acceptance/SKILL.md` and your notes, and checks its work.
 3. It undoes any change outside the one spec file, and fails if there was one.
 4. It runs the check again itself. The verdicts come from that run, not from the agent, and the agent's notes are added to the report.
 

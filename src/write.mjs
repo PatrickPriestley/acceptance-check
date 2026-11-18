@@ -9,7 +9,7 @@ import { findProjectRoot, loadConfig, readNotes } from "./config.mjs";
 import { verify } from "./verify.mjs";
 
 const BIN = fileURLToPath(new URL("../bin/acceptance-check.mjs", import.meta.url));
-const SKILL = fileURLToPath(new URL("../skill/verify-acceptance/SKILL.md", import.meta.url));
+const SKILL = fileURLToPath(new URL("../skills/verify-acceptance/SKILL.md", import.meta.url));
 const PROMPT = fileURLToPath(new URL("./agent-prompt.md", import.meta.url));
 const log = (message) => console.log(`[acceptance-check write] ${message}`);
 

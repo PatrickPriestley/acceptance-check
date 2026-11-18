@@ -1,0 +1,13 @@
+{
+  "name": "acceptance-check",
+  "displayName": "acceptance-check",
+  "version": "0.3.0",
+  "description": "Check pull request acceptance criteria in a real browser, against the change and its base, with a video per criterion.",
+  "author": { "name": "PatrickPriestley" },
+  "homepage": "https://github.com/PatrickPriestley/acceptance-check",
+  "repository": "https://github.com/PatrickPriestley/acceptance-check",
+  "license": "UNLICENSED",
+  "keywords": ["acceptance-criteria", "playwright", "pull-requests", "testing", "verification"],
+  "category": "developer-tools",
+  "skills": "./skills/"
+}

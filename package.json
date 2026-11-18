@@ -1,13 +1,13 @@
 {
   "name": "acceptance-check",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "description": "Check a pull request's acceptance criteria in a real browser against the change and its base, and let an agent write the tests.",
   "type": "module",
   "bin": {
     "acceptance-check": "bin/acceptance-check.mjs"
   },
-  "files": ["bin", "src", "skill", "templates"],
+  "files": ["bin", "src", "skills", "templates", ".claude-plugin", ".cursor-plugin"],
   "engines": {
     "node": ">=20"
   },

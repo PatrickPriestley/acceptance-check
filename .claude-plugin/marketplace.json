@@ -1,0 +1,14 @@
+{
+  "name": "acceptance-check",
+  "owner": { "name": "PatrickPriestley" },
+  "metadata": {
+    "description": "acceptance-check skills for Claude Code."
+  },
+  "plugins": [
+    {
+      "name": "acceptance-check",
+      "source": "./",
+      "description": "Check pull request acceptance criteria in a real browser, against the change and its base, with a video per criterion."
+    }
+  ]
+}
