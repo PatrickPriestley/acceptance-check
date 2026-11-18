@@ -88,6 +88,7 @@ jobs:
           CHECK: ${{ inputs.command }}
           MODEL: ${{ inputs.model }}
         run: >
+          if [ -z "$ANTHROPIC_API_KEY" ]; then echo "::error::The anthropic-api-key secret is empty. Add ANTHROPIC_API_KEY under Settings, Secrets and variables, Actions, Repository secrets, and pass it to this workflow."; exit 1; fi;
           $CHECK write --body=.acceptance/pr-body.md --base=${{ steps.plan.outputs.base }}
           --spec=${{ inputs.spec-dir }}/pr-${{ github.event.pull_request.number }}.spec.ts
           --max-budget-usd=${{ inputs.max-budget-usd }} ${MODEL:+--model=$MODEL}

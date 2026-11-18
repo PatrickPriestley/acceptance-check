@@ -109,6 +109,12 @@ async function run(options) {
   writeFileSync(join(runDir, "agent-notes.md"), `${notes}\n`);
   log(`Agent finished: ${result?.subtype ?? `exit ${agent.code}`}, ${result?.num_turns ?? "?"} turns, $${(result?.total_cost_usd ?? 0).toFixed(2)}`);
 
+  // An agent that could not start work (no API key, no credit, a bad model name)
+  // still ends with a result event, so report its own words.
+  if (!result || result.is_error || agent.code !== 0) {
+    throw new WriteError(`The agent did not run: ${notes || `exit ${agent.code}`}. Its log is in ${relative(root, join(runDir, "agent.jsonl"))}`);
+  }
+
   const outside = changedPaths().filter((path) => path !== spec);
   if (outside.length) {
     const tracked = outside.filter((path) => git("ls-files", "--", path).trim());
