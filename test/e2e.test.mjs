@@ -69,6 +69,24 @@ test("a criterion without a test is reported, and the base build is reused", () 
   assert.match(md, /Every criterion in the pull request description is listed above\./);
 });
 
+test("specs lists the changed specs, and every spec only when asked and none changed", () => {
+  const lines = (run) => {
+    assert.equal(run.status, 0, run.stdout + run.stderr);
+    return run.stdout.split("\n").filter(Boolean);
+  };
+  // The second commit changes the app, not a spec.
+  assert.deepEqual(lines(cli("specs", `--base=${before_}`)), []);
+  const all = cli("specs", `--base=${before_}`, "--all-when-none");
+  assert.deepEqual(lines(all), ["tests/blank-name.spec.ts", "tests/item-count.spec.ts"]);
+  assert.match(all.stderr, /No spec changed since .*; checking all 2\./);
+  // Against the empty tree every spec is new, so --all-when-none changes nothing.
+  const emptyTree = git("hash-object", "-t", "tree", "/dev/null");
+  const added = cli("specs", `--base=${emptyTree}`, "--all-when-none");
+  assert.deepEqual(lines(added), ["tests/blank-name.spec.ts", "tests/item-count.spec.ts"]);
+  assert.equal(added.stderr, "");
+  assert.equal(cli("specs").status, 1);
+});
+
 test("a missing config gives a clear error and init writes the starting files", () => {
   const empty = join(project, "..", `init-${process.pid}`);
   rmSync(empty, { recursive: true, force: true });

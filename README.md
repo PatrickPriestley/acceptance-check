@@ -40,7 +40,7 @@ The plugin carries the skills only. Each app still needs the npm package (below)
 ## Set up an app
 
 ```bash
-npm install --save-dev github:PatrickPriestley/acceptance-check#v0.3.0 @playwright/test
+npm install --save-dev github:PatrickPriestley/acceptance-check#v0.4.0 @playwright/test
 npx playwright install chromium
 npx acceptance-check init
 ```
@@ -61,6 +61,7 @@ Add `.acceptance/` to `.gitignore`. Runs, base builds and agent logs go there.
 npx acceptance-check verify --base=origin/main tests/acceptance/feature.spec.ts
 npx acceptance-check verify --base=origin/main --criteria=criteria.json --skip-build tests/acceptance/feature.spec.ts
 npx acceptance-check criteria pr-body.md > criteria.json
+npx acceptance-check specs --base=origin/main [--all-when-none]          # specs this change adds or edits
 npx acceptance-check write --body=pr-body.md --spec=tests/acceptance/pr-12.spec.ts --base=origin/main
 npx acceptance-check comment .acceptance/runs/<run>/report.md            # print
 npx acceptance-check comment --post .acceptance/runs/<run>/report.md     # post or update on the PR
@@ -117,10 +118,12 @@ permissions:
   pull-requests: write
 jobs:
   acceptance:
-    uses: PatrickPriestley/acceptance-check/.github/workflows/acceptance.yml@v0.3.0
+    uses: PatrickPriestley/acceptance-check/.github/workflows/acceptance.yml@v0.4.0
 ```
 
 It checks the specs the pull request adds or changes against the pull request's base, uploads the videos and traces, and keeps one comment on the pull request up to date. When the description has an `## Acceptance criteria` list, every criterion is reported, including those without a test. An `Acceptance base: <commit hash>` line in the description compares against another commit.
+
+A pull request that changes no spec checks nothing by default. Set `when-no-spec-changed: all` to check every spec instead, and add the files that decide how the specs run to the trigger's `paths`: the workflow itself, `package.json` (which pins acceptance-check) and `acceptance.config.mjs`. Then an upgrade or a config change is checked too. Every spec on the base branch should be tagged `@holds` by then; a `@new` test left there passes on both sides and is reported as not proven.
 
 To have the agent write tests when a label is added, add `.github/workflows/acceptance-agent.yml` and an `ANTHROPIC_API_KEY` repository secret:
 
@@ -134,7 +137,7 @@ permissions:
   pull-requests: write
 jobs:
   write:
-    uses: PatrickPriestley/acceptance-check/.github/workflows/acceptance-agent.yml@v0.3.0
+    uses: PatrickPriestley/acceptance-check/.github/workflows/acceptance-agent.yml@v0.4.0
     secrets:
       anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
 ```
@@ -147,7 +150,8 @@ Adding the `write-acceptance-tests` label runs it. It writes `tests/acceptance/p
 | `install` | `npm ci` | `pnpm install --frozen-lockfile`, `yarn install --immutable`, and so on. pnpm and yarn are enabled through corepack |
 | `browsers` | `npx playwright install --with-deps chromium` | |
 | `command` | `npx acceptance-check` | `pnpm exec acceptance-check`, for example |
-| `spec-dir` | `tests/acceptance` | The config's `specDir` |
+| `spec-dir` | `tests/acceptance` | The config's `specDir`. Agent workflow only; the acceptance workflow reads it from the config |
+| `when-no-spec-changed` | `skip` | `all` checks every spec when the pull request changes none. Acceptance workflow only |
 | `node-version` | `22` | |
 | `label`, `model`, `max-budget-usd` | `write-acceptance-tests`, Claude Code's default, `8` | Agent workflow only |
 

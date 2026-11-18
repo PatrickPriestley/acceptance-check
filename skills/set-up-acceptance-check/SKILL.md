@@ -10,7 +10,7 @@ The goal is one isolated copy of the app that starts from a build, with test dat
 ## 1. Install
 
 ```bash
-npm install --save-dev github:PatrickPriestley/acceptance-check#v0.3.0 @playwright/test
+npm install --save-dev github:PatrickPriestley/acceptance-check#v0.4.0 @playwright/test
 npx playwright install chromium
 npx acceptance-check init
 ```
@@ -54,11 +54,13 @@ The repository ships reusable workflows. A caller looks like this:
 ```yaml
 jobs:
   acceptance:
-    uses: PatrickPriestley/acceptance-check/.github/workflows/acceptance.yml@v0.3.0
+    uses: PatrickPriestley/acceptance-check/.github/workflows/acceptance.yml@v0.4.0
     with:
       install: npm ci
       browsers: npx playwright install --with-deps chromium
       command: npx acceptance-check
 ```
+
+With `when-no-spec-changed: all`, and the workflow, `package.json` and `acceptance.config.mjs` added to the trigger's `paths`, a pull request that upgrades acceptance-check or changes its config checks every spec. Suggest it once the existing specs are tagged `@holds`.
 
 `acceptance-agent.yml` writes the tests from the criteria when a label is added and needs an `anthropic-api-key` secret. Adding a secret is the user's job; say which one.
