@@ -20,6 +20,17 @@ export const CONFIG_FILE = "acceptance.config.mjs";
  * @property {string} [notes] Markdown with app facts for whoever writes the tests.
  * @property {string} [outputDir] Where runs, base builds and agent logs go. Default `.acceptance`.
  * @property {{ setting?: string, limits?: string }} [report] A phrase on the test setting and a sentence on its limits.
+ * @property {Break[]} [breaks] Deliberate faults for the break check. A `@holds` test names the break it
+ *   should catch with `annotation: { type: "catches", description: "<name>" }`.
+ */
+
+/**
+ * @typedef {object} Break
+ * @property {string} name Short lowercase name, such as `saves-ignored`.
+ * @property {string} [description] What the fault does, for people and the agent.
+ * @property {string} file The source file to change, relative to the project root.
+ * @property {string} find Text that occurs exactly once in that file.
+ * @property {string} replace What to put in its place.
  */
 
 /** The nearest folder at or above `start` that holds acceptance.config.mjs. */
@@ -52,6 +63,17 @@ export function validateConfig(root, config) {
   for (const name of ["notes", "playwrightConfig"]) {
     if (config[name] !== undefined && !existsSync(join(root, config[name]))) problems.push(`${name} file ${config[name]} does not exist`);
   }
+  if (config.breaks !== undefined && !Array.isArray(config.breaks)) problems.push("breaks must be a list");
+  const names = new Set();
+  for (const [index, item] of (Array.isArray(config.breaks) ? config.breaks : []).entries()) {
+    const at = `breaks[${index}]`;
+    if (!/^[a-z0-9][a-z0-9-]*$/.test(item?.name ?? "")) problems.push(`${at}.name must be a short lowercase name such as saves-ignored`);
+    else if (names.has(item.name)) problems.push(`${at}.name ${item.name} is used twice`);
+    else names.add(item.name);
+    if (typeof item?.file !== "string" || !existsSync(join(root, item.file))) problems.push(`${at}.file ${item?.file} does not exist`);
+    if (typeof item?.find !== "string" || !item.find) problems.push(`${at}.find must be text to replace`);
+    if (typeof item?.replace !== "string" || item.replace === item.find) problems.push(`${at}.replace must be different text`);
+  }
   if (problems.length) throw new Error(`${CONFIG_FILE}: ${problems.join("; ")}`);
   return {
     ...config,
@@ -61,6 +83,7 @@ export function validateConfig(root, config) {
     playwrightConfig: config.playwrightConfig ?? null,
     outputDir: config.outputDir ?? ".acceptance",
     report: { setting: "", limits: "", ...config.report },
+    breaks: config.breaks ?? [],
   };
 }
 

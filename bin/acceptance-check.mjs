@@ -15,9 +15,11 @@ import { write } from "../src/write.mjs";
 const USAGE = `Usage: acceptance-check <command> [options]
 
 Commands:
-  verify [--base=<ref>] [--skip-build] [--criteria=<file.json>] <spec>...
-      Run the specs against this checkout and the base. Exit 0 when every criterion
-      is met or still holds, 2 when one is not, 1 when the check itself failed.
+  verify [--base=<ref>] [--skip-build] [--criteria=<file.json>] [--no-breaks] <spec>...
+      Run the specs against this checkout and the base, then run each @holds test
+      that names a break against a copy of this change with that break applied.
+      Exit 0 when every criterion is met or still holds and every break is caught,
+      2 when not, 1 when the check itself failed. --no-breaks skips the break check.
   write --body=<pr-body.md> --spec=<spec folder>/<name>.spec.ts [--base=<ref>]
         [--model=<model>] [--max-budget-usd=8] [--max-runs=4]
       Have an agent write one test per criterion in the description, then check them.
@@ -46,8 +48,9 @@ async function main() {
         "skip-build": { type: "boolean" },
         criteria: { type: "string" },
         "prepare-only": { type: "boolean" },
+        "no-breaks": { type: "boolean" },
       });
-      const result = await verify({ base: values.base, skipBuild: values["skip-build"], criteria: values.criteria, prepareOnly: values["prepare-only"], specs: positionals });
+      const result = await verify({ base: values.base, skipBuild: values["skip-build"], criteria: values.criteria, prepareOnly: values["prepare-only"], breaks: !values["no-breaks"], specs: positionals });
       return result.code;
     }
     case "write": {

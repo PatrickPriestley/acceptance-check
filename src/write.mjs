@@ -35,6 +35,12 @@ export async function write(options) {
   }
 }
 
+/** The config's breaks, as a list for the agent prompt. */
+export function describeBreaks(breaks) {
+  if (!breaks.length) return "This app's config defines no breaks, so name none. Say in your report which breaks would let the check prove the `@holds` tests can fail.";
+  return breaks.map((item) => `- \`${item.name}\`: ${item.description ?? `changes ${item.file}`}`).join("\n");
+}
+
 async function run(options) {
   const root = findProjectRoot(resolve(options.cwd ?? process.cwd()));
   const config = await loadConfig(root).catch((error) => { throw new WriteError(error.message); });
@@ -81,6 +87,7 @@ async function run(options) {
     .replaceAll("{{CHECK}}", check)
     .replaceAll("{{MAX_RUNS}}", options.maxRuns ?? "4")
     .replaceAll("{{APP_NOTES}}", readNotes(root, config))
+    .replaceAll("{{BREAKS}}", describeBreaks(config.breaks))
     .replaceAll("{{CRITERIA}}", criteria.map((criterion) => `- ${criterion}`).join("\n"));
   writeFileSync(join(runDir, "prompt.md"), prompt);
 

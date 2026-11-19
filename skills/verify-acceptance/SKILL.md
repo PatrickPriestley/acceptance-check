@@ -24,6 +24,7 @@ Put them in `<spec folder>/<feature>.spec.ts`, using the spec folder from the co
   - `@new` for behaviour this change introduces. It must fail on the base.
   - `@holds` for behaviour that must still work. It may pass on both.
   - `@new` means new in the pull request that adds the test. Once that pull request merges, the behaviour is in every later base, so retag its tests `@holds` when you next change the spec. Otherwise they report "Not proven" against any later base. At the same time, rename an agent's `pr-<number>.spec.ts` after the feature it covers, so the file still means something later.
+- Name the break each `@holds` test should catch, from the config's `breaks`: `annotation: { type: "catches", description: "<break name>" }` (an array of annotations when there is more than one). The check applies that fault to a copy of the change and the test must fail there. If no break fits, name none and suggest one for the config.
 - Assert what the criterion promises and the user or the server can observe: visible text, focus, stored data, whether a request was sent. Not CSS classes or component internals.
 - Drive the app by roles, labels and accessible names. Use `page.goto` with paths relative to the app. The base URL is set for you.
 - If a criterion cannot be checked in this setting (the notes list what cannot run), keep its test, add `annotation: { type: "unverifiable", description: "<reason>" }` to its details and call `test.skip()` in its body. It is reported as not verifiable, with the reason. Never use this because a test is hard to write.
@@ -55,6 +56,8 @@ Add `--criteria=<file.json>`, a JSON list of the criteria, to have every criteri
 | Not proven: base could not run | Read `base-build.log` in the run folder |
 | No test written | Write a test for the criterion, or mark it not verifiable with the reason |
 | Not verifiable here | Say so in your report. Someone has to check it another way |
+| Break check: Weak | The `@holds` test still passes with the fault it names. Strengthen the assertion, never drop the break |
+| Break check: Unknown break | Fix the name, or add the break to the config |
 
 Never weaken an assertion to get a pass.
 

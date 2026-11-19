@@ -60,6 +60,23 @@ test("a config with problems is rejected with every problem listed", () => {
   assert.deepEqual(config.start.allowEnv, ["PATH", "HOME"]);
   assert.equal(config.outputDir, ".acceptance");
   assert.equal(config.playwrightConfig, null);
+  assert.deepEqual(config.breaks, []);
+});
+
+test("breaks need a unique name, an existing file and different replacement text", () => {
+  const root = mkdtempSync(join(tmpdir(), "acceptance-breaks-"));
+  writeFileSync(join(root, "app.js"), "const a = 1;");
+  const base = { install: ["npm", "ci"], build: ["npm", "run", "build"], buildOutputs: ["a"], sources: ["b"], start: { command: ["node"], health: "/h" }, specDir: "t" };
+  assert.throws(
+    () => validateConfig(root, { ...base, breaks: [
+      { name: "Bad Name", file: "app.js", find: "1", replace: "2" },
+      { name: "ok", file: "missing.js", find: "", replace: "" },
+      { name: "ok", file: "app.js", find: "1", replace: "1" },
+    ] }),
+    /breaks\[0\]\.name must be a short lowercase name.*breaks\[1\]\.file missing\.js does not exist; breaks\[1\]\.find must be text.*breaks\[2\]\.name ok is used twice; breaks\[2\]\.replace must be different text/,
+  );
+  const config = validateConfig(root, { ...base, breaks: [{ name: "one-off", file: "app.js", find: "1", replace: "2" }] });
+  assert.equal(config.breaks[0].name, "one-off");
 });
 
 test("{port} and {data} are filled in per copy", () => {

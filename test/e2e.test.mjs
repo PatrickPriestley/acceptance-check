@@ -47,6 +47,8 @@ test("a fix is met against the base before it, and the other criterion still hol
   assert.match(md, /A blank name shows "Enter a name for the item\." and saves nothing \| New \| Fail \| Pass \| ✅ Met/);
   assert.match(md, /A real name is trimmed and added to the list \| Must still hold \| Pass \| Pass \| ✅ Still holds/);
   assert.match(md, new RegExp(`base \`${before_.slice(0, 7)}\`, with an empty list`));
+  assert.match(md, /### Break check/);
+  assert.match(md, /\| A real name is trimmed and added to the list \| `items-not-saved` \| Fail \| ✅ Caught \|/);
   const run2 = run.stdout.match(/Run folder (\S+)/)[1];
   assert.ok(existsSync(join(project, run2, "head/results")), "evidence was kept");
 });
@@ -55,6 +57,33 @@ test("a test that also passes on the base is reported as not proven", () => {
   const run = cli("verify", `--base=${after_}`, "--skip-build", "tests/blank-name.spec.ts");
   assert.equal(run.status, 2, run.stdout + run.stderr);
   assert.match(report(run.stdout), /❌ Not proven: also passes on base/);
+});
+
+test("a @holds test that still passes with its break, or names an unknown break, fails the run", () => {
+  const spec = join(project, "tests", "weak.spec.ts");
+  writeFileSync(spec, `import { test, expect } from "./fixtures";
+test("The page shows a heading", { tag: "@holds", annotation: { type: "catches", description: "items-not-saved" } }, async ({ page }) => {
+  await page.goto("/");
+  await expect(page.getByRole("heading", { name: "Shopping list" })).toBeVisible();
+});
+test("The page shows an Add button", { tag: "@holds", annotation: { type: "catches", description: "no-such-break" } }, async ({ page }) => {
+  await page.goto("/");
+  await expect(page.getByRole("button", { name: "Add" })).toBeVisible();
+});
+`);
+  try {
+    const run = cli("verify", `--base=${before_}`, "--skip-build", "tests/weak.spec.ts");
+    assert.equal(run.status, 2, run.stdout + run.stderr);
+    const md = report(run.stdout);
+    assert.match(md, /\| The page shows a heading \| Must still hold \| Pass \| Pass \| ✅ Still holds \|/);
+    assert.match(md, /\| The page shows a heading \| `items-not-saved` \| Pass \| ❌ Weak: still passes with the break \|/);
+    assert.match(md, /\| The page shows an Add button \| `no-such-break` \| Not run \| ❌ Unknown break: not in the config \|/);
+    const skipped = cli("verify", `--base=${before_}`, "--skip-build", "--no-breaks", "tests/weak.spec.ts");
+    assert.equal(skipped.status, 0, skipped.stdout + skipped.stderr);
+    assert.doesNotMatch(report(skipped.stdout), /Break check/);
+  } finally {
+    rmSync(spec, { force: true });
+  }
 });
 
 test("a criterion without a test is reported, and the base build is reused", () => {

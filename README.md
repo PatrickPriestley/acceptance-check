@@ -70,7 +70,7 @@ npx acceptance-check comment --post .acceptance/runs/<run>/report.md     # post 
 | Exit | Meaning |
 |---|---|
 | 0 | Every criterion is met, still holds or is not verifiable here |
-| 2 | A criterion is not met, regressed, not proven, untagged or has no test |
+| 2 | A criterion is not met, regressed, not proven, untagged or has no test, or a `@holds` test is weak against its break |
 | 1 | The check itself failed: config, build, start-up or Playwright |
 | 3 | `write` only: the description has no criteria |
 
@@ -99,10 +99,30 @@ export default {
   playwrightConfig: undefined,            // optional; a built-in one is used otherwise
   outputDir: ".acceptance",               // optional
   report: { setting: "with test data", limits: "" },
+  breaks: [                               // optional; see Break check
+    { name: "items-not-saved", description: "The server drops new items.",
+      file: "src/items.js", find: "items.push(item);", replace: "" },
+  ],
 };
 ```
 
 Commands are arrays and never run through a shell. In `start.env`, `{port}` is a free port and `{data}` a fresh folder for each copy. Nothing else from the environment reaches the app, so database URLs and credentials stay out. The base runs with this checkout's config.
+
+## Break check
+
+A `@new` test proves itself: it has to fail on the base. A `@holds` test passes on both sides, so a weak one, such as a test that only checks the page loaded, would pass forever. The break check closes that gap.
+
+1. The config lists `breaks`: small deliberate faults, each one exact text in one source file and what to replace it with.
+2. A `@holds` test names the break it should catch: `annotation: { type: "catches", description: "items-not-saved" }`.
+3. After the normal run, `verify` copies this change (uncommitted edits to tracked files included), applies each named break in turn, builds it, and runs the tests that name it.
+
+| Result | Meaning |
+|---|---|
+| Caught | The test failed with its break, so it can detect that fault |
+| Weak: still passes with the break | The test cannot tell the fault apart. Strengthen it |
+| Unknown break | The test names a break the config does not have |
+
+A weak or unknown result exits 2. A `@holds` test that names no break is listed in the report but does not fail the run. The find text must occur exactly once in its file; when the code moves on, `verify` says which break to update. Each break costs one build and one run of its tests, so a few well-chosen breaks go a long way. `--no-breaks` skips the check.
 
 ## Run it on pull requests
 
