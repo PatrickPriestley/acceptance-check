@@ -3,7 +3,8 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { commentBody, MARKER } from "../src/comment.mjs";
+import { createServer } from "node:http";
+import { commentBody, MARKER, postComment } from "../src/comment.mjs";
 import { expandEnv, validateConfig } from "../src/config.mjs";
 import { normalizeCriterion, parseCriteria } from "../src/criteria.mjs";
 import { verdict, VERDICTS } from "../src/verdicts.mjs";
@@ -109,4 +110,25 @@ test("the comment fills in the artifact link and carries the marker", () => {
   assert.match(body, /^<!-- acceptance-agent -->/);
   assert.match(body, /\(https:\/\/example\.invalid\/a\)/);
   assert.match(commentBody(join(dir, "missing.md"), { RUN_URL: "https://example.invalid/r" }), /did not produce a report/);
+});
+
+test("a proposal edits its own comment and leaves the verdicts comment alone", async () => {
+  const calls = [];
+  const server = createServer(async (request, response) => {
+    let body = "";
+    for await (const chunk of request) body += chunk;
+    calls.push(`${request.method} ${request.url}`);
+    const comments = [{ id: 1, body: `${MARKER}\nverdicts` }, { id: 2, body: "<!-- acceptance-proposal -->\nold proposal" }];
+    const reply = request.method === "GET" ? comments : { html_url: `comment-${request.url.split("/").at(-1)}` };
+    response.writeHead(200, { "Content-Type": "application/json" }).end(JSON.stringify(reply));
+  });
+  await new Promise((done) => server.listen(0, "127.0.0.1", done));
+  const env = { GITHUB_TOKEN: "t", GITHUB_REPOSITORY: "o/r", PR_NUMBER: "7", GITHUB_API_URL: `http://127.0.0.1:${server.address().port}` };
+  try {
+    assert.equal(await postComment("<!-- acceptance-proposal -->\nnew proposal", env), "comment-2");
+    assert.equal(await postComment(`${MARKER}\nnew verdicts`, env), "comment-1");
+    assert.deepEqual(calls.filter((call) => call.startsWith("PATCH")), ["PATCH /repos/o/r/issues/comments/2", "PATCH /repos/o/r/issues/comments/1"]);
+  } finally {
+    server.close();
+  }
 });

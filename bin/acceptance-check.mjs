@@ -8,6 +8,7 @@ import { parseArgs } from "node:util";
 import { commentBody, postComment } from "../src/comment.mjs";
 import { CONFIG_FILE } from "../src/config.mjs";
 import { parseCriteria } from "../src/criteria.mjs";
+import { propose } from "../src/propose.mjs";
 import { listSpecs } from "../src/specs.mjs";
 import { verify } from "../src/verify.mjs";
 import { write } from "../src/write.mjs";
@@ -24,6 +25,10 @@ Commands:
         [--model=<model>] [--max-budget-usd=8] [--max-runs=4]
       Have an agent write one test per criterion in the description, then check them.
       Exit 3 when the description has no "## Acceptance criteria" list.
+  propose [--base=<ref>] [--model=<model>] [--max-budget-usd=2]
+      Have a read-only agent propose acceptance criteria for a change that has none.
+      Writes a comment-ready proposal.md. Exit 3 when no app source changed or the
+      agent finds no visible change.
   specs --base=<ref> [--all-when-none]
       Print the specs that this checkout adds or changes since the base, one per line.
       With --all-when-none, print every spec in specDir when none changed.
@@ -65,6 +70,10 @@ async function main() {
       if (!values.body || !values.spec) return usage();
       const result = await write({ body: values.body, spec: values.spec, base: values.base, model: values.model, maxBudgetUsd: values["max-budget-usd"], maxRuns: values["max-runs"] });
       return result.code;
+    }
+    case "propose": {
+      const { values } = parse({ base: { type: "string" }, model: { type: "string" }, "max-budget-usd": { type: "string" } });
+      return (await propose({ base: values.base, model: values.model, maxBudgetUsd: values["max-budget-usd"] })).code;
     }
     case "specs": {
       const { values } = parse({ base: { type: "string" }, "all-when-none": { type: "boolean" } });

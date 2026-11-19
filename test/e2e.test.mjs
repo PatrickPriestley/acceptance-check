@@ -135,6 +135,43 @@ process.exitCode = r.code;`;
   assert.doesNotMatch(run.stderr, /wrote no spec/);
 });
 
+test("propose writes a comment-ready proposal, and stops early when nothing visible changed", () => {
+  const dir = join(project, ".acceptance");
+  mkdirSync(dir, { recursive: true });
+  const fakeAgent = (name, text) => {
+    const path = join(dir, `${name}.mjs`);
+    writeFileSync(path, `#!/usr/bin/env node\nconsole.log(JSON.stringify({ type: "result", subtype: "success", is_error: false, num_turns: 3, total_cost_usd: 0.1, result: ${JSON.stringify(text)} }));\n`);
+    chmodSync(path, 0o755);
+    return path;
+  };
+  const runPropose = (base, agent) => spawnSync(process.execPath, ["--input-type=module", "-e", `import { propose } from ${JSON.stringify(join(packageRoot, "src/propose.mjs"))};
+const r = await propose({ base: ${JSON.stringify(base)}, agent: ${JSON.stringify(agent)} });
+console.log(JSON.stringify(r)); process.exitCode = r.code;`], { cwd: project, encoding: "utf8", timeout: 60_000 });
+
+  const good = fakeAgent("propose-good", "The change rejects blank names.\n\n## Acceptance criteria\n\n- A blank name shows \"Enter a name for the item.\" and saves nothing\n- A real name is still added to the list\n\n## Why these\n\nREJECT_BLANK now stops the submit.\n");
+  const run = runPropose(before_, good);
+  assert.equal(run.status, 0, run.stdout + run.stderr);
+  const result = JSON.parse(run.stdout.trim().split("\n").at(-1));
+  assert.deepEqual(result.criteria, ['A blank name shows "Enter a name for the item." and saves nothing', "A real name is still added to the list"]);
+  const proposal = readFileSync(result.proposal, "utf8");
+  assert.match(proposal, /^<!-- acceptance-proposal -->\n## Proposed acceptance criteria/);
+  assert.match(proposal, /```markdown\n## Acceptance criteria\n\n- A blank name shows "Enter a name for the item\." and saves nothing\n- A real name is still added to the list\n```/);
+  assert.match(proposal, /\*\*Why these\.\*\* REJECT_BLANK now stops the submit\./);
+
+  const none = runPropose(before_, fakeAgent("propose-none", "NO VISIBLE CHANGE: only comments changed."));
+  assert.equal(none.status, 3, none.stdout + none.stderr);
+  assert.match(none.stdout, /No visible change: only comments changed\./);
+
+  const vague = runPropose(before_, fakeAgent("propose-vague", "Looks fine to me."));
+  assert.equal(vague.status, 1);
+  assert.match(vague.stderr, /The agent proposed no criteria/);
+
+  // HEAD against itself: no app source changed, so the agent is never started.
+  const unchanged = runPropose(after_, join(dir, "no-such-agent"));
+  assert.equal(unchanged.status, 3, unchanged.stdout + unchanged.stderr);
+  assert.match(unchanged.stdout, /nothing to propose/);
+});
+
 test("a missing config gives a clear error and init writes the starting files", () => {
   const empty = join(project, "..", `init-${process.pid}`);
   rmSync(empty, { recursive: true, force: true });

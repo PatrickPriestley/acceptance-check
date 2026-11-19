@@ -1,9 +1,10 @@
 // Writes acceptance tests from a pull request description with a Claude Code agent,
 // then checks them independently with a separate verify run.
-import { execFileSync, spawn } from "node:child_process";
-import { appendFileSync, createWriteStream, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { AgentError, runAgent } from "./agent.mjs";
 import { parseCriteria } from "./criteria.mjs";
 import { findProjectRoot, loadConfig, readNotes } from "./config.mjs";
 import { verify } from "./verify.mjs";
@@ -89,37 +90,17 @@ async function run(options) {
     .replaceAll("{{APP_NOTES}}", readNotes(root, config))
     .replaceAll("{{BREAKS}}", describeBreaks(config.breaks))
     .replaceAll("{{CRITERIA}}", criteria.map((criterion) => `- ${criterion}`).join("\n"));
-  writeFileSync(join(runDir, "prompt.md"), prompt);
-
-  // The default permission mode refuses anything not allowed here, without
-  // prompting. File writes are limited to the spec folder. Shell commands that
-  // write files are refused; Claude Code still allows read-only ones such as cat.
-  // acceptEdits must not be used: it lets shell commands such as sed -i through.
+  // File writes are limited to the spec folder. Shell commands that write files
+  // are refused; Claude Code still allows read-only ones such as cat.
   const tools = ["Read", "Glob", "Grep", `Write(${config.specDir}/**)`, `Edit(${config.specDir}/**)`,
     `Bash(${checkPrefix}:*)`, "Bash(git diff:*)", "Bash(git log:*)", "Bash(git show:*)"];
-  const agentArgs = ["-p", prompt, "--output-format", "stream-json", "--verbose", "--permission-mode", "default",
-    "--max-budget-usd", options.maxBudgetUsd ?? "8", "--allowedTools", ...tools, ...(options.model ? ["--model", options.model] : [])];
   log("Agent is writing the tests");
-  const agent = await new Promise((done) => {
-    const child = spawn(options.agent ?? "claude", agentArgs, { cwd: root, stdio: ["ignore", "pipe", "pipe"] });
-    const file = createWriteStream(join(runDir, "agent.jsonl"));
-    child.stdout.pipe(file, { end: false });
-    child.stderr.pipe(file, { end: false });
-    child.once("error", (error) => { file.end(); done({ code: 127, error }); });
-    child.once("close", (code) => { file.end(); done({ code: code ?? 1 }); });
-  });
-  if (agent.error) throw new WriteError(`Could not start the agent: ${agent.error.message}. Install Claude Code (npm i -g @anthropic-ai/claude-code).`);
-
-  const events = readFileSync(join(runDir, "agent.jsonl"), "utf8").split("\n").flatMap((line) => { try { return [JSON.parse(line)]; } catch { return []; } });
-  const result = events.findLast((event) => event.type === "result");
-  const notes = (result?.result ?? "").trim();
-  writeFileSync(join(runDir, "agent-notes.md"), `${notes}\n`);
-  log(`Agent finished: ${result?.subtype ?? `exit ${agent.code}`}, ${result?.num_turns ?? "?"} turns, $${(result?.total_cost_usd ?? 0).toFixed(2)}`);
-
-  // An agent that could not start work (no API key, no credit, a bad model name)
-  // still ends with a result event, so report its own words.
-  if (!result || result.is_error || agent.code !== 0) {
-    throw new WriteError(`The agent did not run: ${notes || `exit ${agent.code}`}. Its log is in ${relative(root, join(runDir, "agent.jsonl"))}`);
+  let result, notes;
+  try {
+    ({ result, notes } = await runAgent({ root, runDir, prompt, tools, model: options.model, maxBudgetUsd: options.maxBudgetUsd, agent: options.agent, log }));
+  } catch (error) {
+    if (error instanceof AgentError) throw new WriteError(error.message);
+    throw error;
   }
 
   const outside = changedPaths().filter((path) => path !== spec);

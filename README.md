@@ -40,7 +40,7 @@ The plugin carries the skills only. Each app still needs the npm package (below)
 ## Set up an app
 
 ```bash
-npm install --save-dev github:PatrickPriestley/acceptance-check#v0.4.1 @playwright/test
+npm install --save-dev github:PatrickPriestley/acceptance-check#v0.5.0 @playwright/test
 npx playwright install chromium
 npx acceptance-check init
 ```
@@ -138,7 +138,7 @@ permissions:
   pull-requests: write
 jobs:
   acceptance:
-    uses: PatrickPriestley/acceptance-check/.github/workflows/acceptance.yml@v0.4.1
+    uses: PatrickPriestley/acceptance-check/.github/workflows/acceptance.yml@v0.5.0
 ```
 
 It checks the specs the pull request adds or changes against the pull request's base, uploads the videos and traces, and keeps one comment on the pull request up to date. When the description has an `## Acceptance criteria` list, every criterion is reported, including those without a test. An `Acceptance base: <commit hash>` line in the description compares against another commit.
@@ -157,7 +157,7 @@ permissions:
   pull-requests: write
 jobs:
   write:
-    uses: PatrickPriestley/acceptance-check/.github/workflows/acceptance-agent.yml@v0.4.1
+    uses: PatrickPriestley/acceptance-check/.github/workflows/acceptance-agent.yml@v0.5.0
     secrets:
       anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
 ```
@@ -189,6 +189,42 @@ Both skip pull requests from forks, which get no secrets and a read-only token. 
 The agent runs in Claude Code's default permission mode. It can write only in `specDir`, and its shell is limited to the check, git reads and read-only commands. Do not switch it to `acceptEdits`: that mode lets shell commands such as `sed -i` through. It refuses to start while other files in the project have uncommitted changes.
 
 A pilot run costs about $0.25 to $0.50 and takes 1 to 3 minutes.
+
+## Let an agent propose the criteria
+
+When a pull request changes the app but its description has no criteria, `acceptance-check propose --base=origin/main` has a read-only agent read the diff and the code it touches, and writes `proposal.md`: three to six criteria in the app's own words, and why. It can read files and git history and nothing else. It is not started at all when no file in the config's `sources` changed, and it proposes nothing for a change no user can see. It exits 3 in both cases.
+
+A person stays in charge of what "correct" means. The proposal is a comment, never a change to the description. In CI:
+
+```yaml
+name: Acceptance criteria proposal
+on:
+  pull_request:
+    types: [opened, reopened, ready_for_review, labeled]
+permissions:
+  contents: read
+  pull-requests: write
+jobs:
+  propose:
+    uses: PatrickPriestley/acceptance-check/.github/workflows/acceptance-propose.yml@v0.5.0
+    secrets:
+      anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
+```
+
+It skips drafts and descriptions that already have criteria. The `propose-acceptance-criteria` label asks again. To have tests written as soon as you paste the criteria into the description, give the test writer `write-on-criteria: true` and the `edited` event:
+
+```yaml
+on:
+  pull_request:
+    types: [labeled, edited]
+jobs:
+  write:
+    uses: PatrickPriestley/acceptance-check/.github/workflows/acceptance-agent.yml@v0.5.0
+    with:
+      write-on-criteria: true
+```
+
+It starts only when an edit adds the list to a description that had none, not on every later edit. A proposal costs well under the default $2 cap.
 
 ## Limits
 

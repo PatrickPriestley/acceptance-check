@@ -1,0 +1,96 @@
+name: Acceptance criteria proposal
+# Reusable. When a pull request that changes the app's sources has no
+# "## Acceptance criteria" list, a read-only agent reads the diff and posts proposed
+# criteria as one comment. A person edits them into the description, which can then
+# start the test writer (acceptance-agent.yml with write-on-criteria).
+#
+#   on:
+#     pull_request:
+#       types: [opened, reopened, ready_for_review, labeled]
+#   permissions: { contents: read, pull-requests: write }
+#   jobs:
+#     propose:
+#       uses: PatrickPriestley/acceptance-check/.github/workflows/acceptance-propose.yml@<tag>
+#       secrets:
+#         anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
+on:
+  workflow_call:
+    inputs:
+      label:
+        description: A label that asks for a proposal again, for example after the change grew. It is removed afterwards.
+        type: string
+        default: propose-acceptance-criteria
+      working-directory:
+        type: string
+        default: "."
+      node-version:
+        type: string
+        default: "22"
+      install:
+        type: string
+        default: npm ci
+      command:
+        type: string
+        default: npx acceptance-check
+      model:
+        description: Claude model for the agent. Empty uses Claude Code's default.
+        type: string
+        default: ""
+      max-budget-usd:
+        type: string
+        default: "2"
+    secrets:
+      anthropic-api-key:
+        required: true
+jobs:
+  propose:
+    # Not for forks (no secrets), drafts, or descriptions that already list criteria.
+    # A label event only counts for this workflow's own label.
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      !github.event.pull_request.draft &&
+      !contains(github.event.pull_request.body, '## Acceptance criteria') &&
+      (github.event.action != 'labeled' || github.event.label.name == inputs.label)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: ${{ inputs.working-directory }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ inputs.node-version }}
+      - name: Enable pnpm and yarn
+        run: corepack enable
+      - run: ${{ inputs.install }}
+      - run: npm install --global @anthropic-ai/claude-code
+      - name: Propose criteria
+        id: propose
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.anthropic-api-key }}
+          CHECK: ${{ inputs.command }}
+          MODEL: ${{ inputs.model }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          if [ -z "$ANTHROPIC_API_KEY" ]; then echo "::error::The anthropic-api-key secret is empty. Add ANTHROPIC_API_KEY under Settings, Secrets and variables, Actions, Repository secrets, and pass it to this workflow."; exit 1; fi
+          code=0
+          $CHECK propose --base="$PR_BASE" --max-budget-usd=${{ inputs.max-budget-usd }} ${MODEL:+--model=$MODEL} || code=$?
+          # 3: no app source changed, or nothing a user can see. Nothing to post.
+          if [ "$code" -ne 0 ] && [ "$code" -ne 3 ]; then exit "$code"; fi
+      - name: Comment on the pull request
+        if: steps.propose.outputs.proposal != ''
+        env:
+          CHECK: ${{ inputs.command }}
+          GITHUB_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: $CHECK comment --post "${{ steps.propose.outputs.proposal }}"
+      - name: Remove the label so it can be added again
+        if: always() && github.event.action == 'labeled'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          LABEL: ${{ inputs.label }}
+        run: gh pr edit ${{ github.event.pull_request.number }} --remove-label "$LABEL" || true
