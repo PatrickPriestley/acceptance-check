@@ -16,10 +16,11 @@ Read the change and propose the criteria a reviewer would check by hand in a bro
 
 ## Rules
 
-- Each criterion is one sentence a person can check in a browser, in the app's own words: "Pressing Escape closes the Add item form", not "the modal handler works".
+- Each criterion is one short sentence, about 20 words at most, with one outcome a person can check in a browser, in the app's own words: "Pressing Escape closes the Add item form", not "the modal handler works". Each becomes one test, so split "X happens, and Y, and Z" into separate criteria and keep the most important.
 - Describe outcomes a user or the server can observe: text, focus, what is saved, what a reload shows. Not functions, classes or styles.
 - Propose new behaviour first, then at most two things nearby that must keep working.
-- Three to six criteria. Fewer when the change is small. Do not pad.
+- Three to eight criteria. Fewer when the change is small. Do not pad.
+- Exact numbers and texts only where the change itself decides them. The test data may differ, so say "the purchased count goes up by one", not "the heading reads 1 purchased".
 - When something cannot be checked here (the notes above say what cannot run), still propose it if it matters and add " (needs <what>)" at the end.
 - If the change alters nothing a user can see or do (refactoring, tests, docs, tooling), say so and propose nothing.
 
@@ -35,7 +36,7 @@ End with exactly one of these, as plain markdown:
 
 ## Why these
 
-<two or three sentences: what in the diff each one comes from, and anything you were unsure of>
+<a few short bullets: what in the diff each one comes from, what you left out and why, and anything you were unsure of>
 ```
 
 or, when nothing visible changed:

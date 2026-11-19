@@ -72,7 +72,7 @@ async function run(options) {
     ...criteria.map((criterion) => `- ${criterion}`),
     "```",
     "",
-    ...(why ? ["**Why these.** " + why.replace(/\s*\n\s*/g, " "), ""] : []),
+    ...(why ? ["<details><summary>Why these</summary>", "", why, "", "</details>", ""] : []),
     "Once the list is in the description, tests can be written from it and checked against the base.",
     "",
   ].join("\n"));

@@ -263,7 +263,7 @@ console.log(JSON.stringify(r)); process.exitCode = r.code;`], { cwd: project, en
   const proposal = readFileSync(result.proposal, "utf8");
   assert.match(proposal, /^<!-- acceptance-proposal -->\n## Proposed acceptance criteria/);
   assert.match(proposal, /```markdown\n## Acceptance criteria\n\n- A blank name shows "Enter a name for the item\." and saves nothing\n- A real name is still added to the list\n```/);
-  assert.match(proposal, /\*\*Why these\.\*\* REJECT_BLANK now stops the submit\./);
+  assert.match(proposal, /<details><summary>Why these<\/summary>\n\nREJECT_BLANK now stops the submit\.\n\n<\/details>/);
 
   const none = runPropose(before_, fakeAgent("propose-none", "NO VISIBLE CHANGE: only comments changed."));
   assert.equal(none.status, 3, none.stdout + none.stderr);
