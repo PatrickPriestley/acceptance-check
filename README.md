@@ -124,7 +124,7 @@ A `@new` test proves itself: it has to fail on the base. A `@holds` test passes 
 | Result | Meaning |
 |---|---|
 | Caught | The test failed with its break, so it can detect that fault |
-| Weak: still passes with the break | The test cannot tell the fault apart. Strengthen it |
+| Weak: still passes with the break | The test cannot tell the fault apart. Strengthen it, unless the fault cannot be seen from outside at all (another layer already covers it), in which case choose a different break |
 | Unknown break | The test names a break the config does not have |
 
 A weak or unknown result exits 2. A `@holds` test that names no break is listed in the report but does not fail the run. The find text must occur exactly once in its file; when the code moves on, `verify` says which break to update. Each break costs one build and one run of its tests, so a few well-chosen breaks go a long way. `--no-breaks` skips the check.

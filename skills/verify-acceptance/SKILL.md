@@ -58,7 +58,7 @@ When the config has `explore`, also run `acceptance-check explore --base=<base>`
 | Not proven: base could not run | Read `base-build.log` in the run folder |
 | No test written | Write a test for the criterion, or mark it not verifiable with the reason |
 | Not verifiable here | Say so in your report. Someone has to check it another way |
-| Break check: Weak | The `@holds` test still passes with the fault it names. Strengthen the assertion, never drop the break |
+| Break check: Weak | The `@holds` test still passes with the fault it names. Strengthen the assertion. If the fault cannot be seen from outside at all (another layer covers it), name a different break and say why. Never drop a break just to pass |
 | Break check: Unknown break | Fix the name, or add the break to the config |
 
 Never weaken an assertion to get a pass.
