@@ -20,6 +20,28 @@ export const CONFIG_FILE = "acceptance.config.mjs";
  * @property {string} [notes] Markdown with app facts for whoever writes the tests.
  * @property {string} [outputDir] Where runs, base builds and agent logs go. Default `.acceptance`.
  * @property {{ setting?: string, limits?: string }} [report] A phrase on the test setting and a sentence on its limits.
+ * @property {Explore} [explore] A property-based explorer to run against each copy, such as Bombadil.
+ * @property {Break[]} [breaks] Deliberate faults for the break check. A `@holds` test names the break it
+ *   should catch with `annotation: { type: "catches", description: "<name>" }`.
+ */
+
+/**
+ * @typedef {object} Explore
+ * @property {string[]} command Runs the explorer against one running copy. `{url}` is the copy's origin and
+ *   `{output}` a fresh folder for its trace. It runs in the project root, so it uses this checkout's properties.
+ *   Exit 0 means no property was violated, 2 that one was. Any other exit means the explorer failed, which fails the run.
+ * @property {string[]} properties Files that hold the properties the agent may add to. They must be inside
+ *   `specDir`, because the agent may write nowhere else; the explorer's own entry file can import them.
+ * @property {string} [description] What the explorer checks, for people and the agent.
+ */
+
+/**
+ * @typedef {object} Break
+ * @property {string} name Short lowercase name, such as `saves-ignored`.
+ * @property {string} [description] What the fault does, for people and the agent.
+ * @property {string} file The source file to change, relative to the project root.
+ * @property {string} find Text that occurs exactly once in that file.
+ * @property {string} replace What to put in its place.
  */
 
 /** The nearest folder at or above `start` that holds acceptance.config.mjs. */
@@ -52,6 +74,25 @@ export function validateConfig(root, config) {
   for (const name of ["notes", "playwrightConfig"]) {
     if (config[name] !== undefined && !existsSync(join(root, config[name]))) problems.push(`${name} file ${config[name]} does not exist`);
   }
+  if (config.breaks !== undefined && !Array.isArray(config.breaks)) problems.push("breaks must be a list");
+  const names = new Set();
+  for (const [index, item] of (Array.isArray(config.breaks) ? config.breaks : []).entries()) {
+    const at = `breaks[${index}]`;
+    if (!/^[a-z0-9][a-z0-9-]*$/.test(item?.name ?? "")) problems.push(`${at}.name must be a short lowercase name such as saves-ignored`);
+    else if (names.has(item.name)) problems.push(`${at}.name ${item.name} is used twice`);
+    else names.add(item.name);
+    if (typeof item?.file !== "string" || !existsSync(join(root, item.file))) problems.push(`${at}.file ${item?.file} does not exist`);
+    if (typeof item?.find !== "string" || !item.find) problems.push(`${at}.find must be text to replace`);
+    if (typeof item?.replace !== "string" || item.replace === item.find) problems.push(`${at}.replace must be different text`);
+  }
+  if (config.explore !== undefined) {
+    if (!isCommand(config.explore?.command)) problems.push("explore.command must be a command as an array of strings");
+    if (!Array.isArray(config.explore?.properties) || !config.explore.properties.length) problems.push("explore.properties must list at least one file");
+    else for (const file of config.explore.properties) {
+      if (typeof file !== "string" || !existsSync(join(root, file))) problems.push(`explore.properties file ${file} does not exist`);
+      else if (typeof config.specDir === "string" && !file.startsWith(`${config.specDir.replace(/\/+$/, "")}/`)) problems.push(`explore.properties file ${file} must be inside specDir, where the agent may write`);
+    }
+  }
   if (problems.length) throw new Error(`${CONFIG_FILE}: ${problems.join("; ")}`);
   return {
     ...config,
@@ -61,6 +102,8 @@ export function validateConfig(root, config) {
     playwrightConfig: config.playwrightConfig ?? null,
     outputDir: config.outputDir ?? ".acceptance",
     report: { setting: "", limits: "", ...config.report },
+    breaks: config.breaks ?? [],
+    explore: config.explore ?? null,
   };
 }
 

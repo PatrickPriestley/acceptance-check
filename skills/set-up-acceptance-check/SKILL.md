@@ -10,7 +10,7 @@ The goal is one isolated copy of the app that starts from a build, with test dat
 ## 1. Install
 
 ```bash
-npm install --save-dev github:PatrickPriestley/acceptance-check#v0.4.1 @playwright/test
+npm install --save-dev github:PatrickPriestley/acceptance-check#v0.5.0 @playwright/test
 npx playwright install chromium
 npx acceptance-check init
 ```
@@ -54,7 +54,7 @@ The repository ships reusable workflows. A caller looks like this:
 ```yaml
 jobs:
   acceptance:
-    uses: PatrickPriestley/acceptance-check/.github/workflows/acceptance.yml@v0.4.1
+    uses: PatrickPriestley/acceptance-check/.github/workflows/acceptance.yml@v0.5.0
     with:
       install: npm ci
       browsers: npx playwright install --with-deps chromium

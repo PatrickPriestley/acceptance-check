@@ -1,12 +1,13 @@
 name: Acceptance test writer
 # Reusable. When the label is added to a pull request whose description has an
-# "## Acceptance criteria" list, an agent writes <spec-dir>/pr-<number>.spec.ts,
+# "## Acceptance criteria" list (or, with write-on-criteria, when that list is first
+# added to the description), an agent writes <spec-dir>/pr-<number>.spec.ts,
 # a separate run checks it, the spec is committed to the pull request branch, and
 # the verdicts and recordings are posted on the pull request.
 #
 #   on:
 #     pull_request:
-#       types: [labeled]
+#       types: [labeled, edited]
 #   permissions: { contents: write, pull-requests: write }
 #   jobs:
 #     write:
@@ -20,6 +21,10 @@ on:
         description: The label that starts the agent. It is removed afterwards, so it can be added again.
         type: string
         default: write-acceptance-tests
+      write-on-criteria:
+        description: Also start when an edit adds an "## Acceptance criteria" list to a description that had none, such as a pasted proposal. Needs the edited event.
+        type: boolean
+        default: false
       working-directory:
         type: string
         default: "."
@@ -51,7 +56,13 @@ on:
 jobs:
   write:
     # Fork pull requests get no secrets and a read-only token.
-    if: github.event.label.name == inputs.label && github.event.pull_request.head.repo.full_name == github.repository
+    # An edit starts it only when the criteria list is new, not on every later edit.
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository && (
+        (github.event.action == 'labeled' && github.event.label.name == inputs.label) ||
+        (inputs.write-on-criteria && github.event.action == 'edited' && github.event.changes.body != null &&
+          contains(github.event.pull_request.body, '## Acceptance criteria') &&
+          !contains(github.event.changes.body.from, '## Acceptance criteria')))
     runs-on: ubuntu-latest
     timeout-minutes: 45
     defaults:
@@ -94,8 +105,11 @@ jobs:
           --max-budget-usd=${{ inputs.max-budget-usd }} ${MODEL:+--model=$MODEL}
       - name: Commit the spec to the pull request
         if: steps.write.outputs.spec != ''
+        env:
+          FILES: ${{ steps.write.outputs.files || steps.write.outputs.spec }}
         run: |
-          git add "${{ steps.write.outputs.spec }}"
+          # The spec, and any property file in the spec folder that the agent changed.
+          git add -- $FILES
           if git diff --cached --quiet; then exit 0; fi
           git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
             commit -m "test: add acceptance tests written from the pull request criteria"

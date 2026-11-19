@@ -40,7 +40,7 @@ The plugin carries the skills only. Each app still needs the npm package (below)
 ## Set up an app
 
 ```bash
-npm install --save-dev github:PatrickPriestley/acceptance-check#v0.4.1 @playwright/test
+npm install --save-dev github:PatrickPriestley/acceptance-check#v0.5.0 @playwright/test
 npx playwright install chromium
 npx acceptance-check init
 ```
@@ -70,7 +70,7 @@ npx acceptance-check comment --post .acceptance/runs/<run>/report.md     # post 
 | Exit | Meaning |
 |---|---|
 | 0 | Every criterion is met, still holds or is not verifiable here |
-| 2 | A criterion is not met, regressed, not proven, untagged or has no test |
+| 2 | A criterion is not met, regressed, not proven, untagged or has no test, or a `@holds` test is weak against its break |
 | 1 | The check itself failed: config, build, start-up or Playwright |
 | 3 | `write` only: the description has no criteria |
 
@@ -99,10 +99,50 @@ export default {
   playwrightConfig: undefined,            // optional; a built-in one is used otherwise
   outputDir: ".acceptance",               // optional
   report: { setting: "with test data", limits: "" },
+  explore: {                              // optional; see Exploration
+    command: ["node", "scripts/explore.mjs", "{url}", "{output}"],
+    properties: ["tests/acceptance/properties.ts"],
+    description: "Bombadil explores the Shop page",
+  },
+  breaks: [                               // optional; see Break check
+    { name: "items-not-saved", description: "The server drops new items.",
+      file: "src/items.js", find: "items.push(item);", replace: "" },
+  ],
 };
 ```
 
 Commands are arrays and never run through a shell. In `start.env`, `{port}` is a free port and `{data}` a fresh folder for each copy. Nothing else from the environment reaches the app, so database URLs and credentials stay out. The base runs with this checkout's config.
+
+## Break check
+
+A `@new` test proves itself: it has to fail on the base. A `@holds` test passes on both sides, so a weak one, such as a test that only checks the page loaded, would pass forever. The break check closes that gap.
+
+1. The config lists `breaks`: small deliberate faults, each one exact text in one source file and what to replace it with.
+2. A `@holds` test names the break it should catch: `annotation: { type: "catches", description: "items-not-saved" }`.
+3. After the normal run, `verify` copies this change (uncommitted edits to tracked files included), applies each named break in turn, builds it, and runs the tests that name it.
+
+| Result | Meaning |
+|---|---|
+| Caught | The test failed with its break, so it can detect that fault |
+| Weak: still passes with the break | The test cannot tell the fault apart. Strengthen it, unless the fault cannot be seen from outside at all (another layer already covers it), in which case choose a different break |
+| Unknown break | The test names a break the config does not have |
+| Break does not build | The fault breaks the build itself, so nothing was checked. Change its find or replace text |
+
+A weak or unknown result exits 2. A `@holds` test that names no break is listed in the report but does not fail the run. The find text must occur exactly once in its file; when the code moves on, `verify` says which break to update. Each break costs one build and one run of its tests, so a few well-chosen breaks go a long way. `--no-breaks` skips the check.
+
+## Exploration
+
+Tests check the paths someone thought of. A property-based explorer, such as [Bombadil](https://github.com/antithesishq/bombadil), checks promises that must hold after any sequence of actions, by acting on the running app at random. `acceptance-check explore` runs the config's explorer against an isolated copy of this change, with `{url}` and `{output}` filled in, and against the base too when it finds something:
+
+| Result | Meaning | Exit |
+|---|---|---|
+| No violation found | Nothing this time. Exploration is random, so this is evidence, not proof | 0 |
+| New violation | Found on this change and not on the base | 2 |
+| Violation also on the base | Not caused by this change | 0 |
+
+The explorer command exits 0 when no property was violated and 2 when one was, as Bombadil does. Any other exit means the explorer itself failed, and the run fails with its log: a broken explorer never reads as a pass. It runs in the project root, so it uses this checkout's properties against both copies.
+
+`explore.properties` lists the files the agent may add properties to, and they must be inside `specDir`: the agent may write nowhere else, so the explorer's own entry file imports them. When the config has `explore`, the test-writing agent may add a property for state the change makes visible, run the explorer, and turn a new violation into a test that replays it, titled "Found by exploration: ...". A property it changed is explored again in a separate run, and the result is added to the report.
 
 ## Run it on pull requests
 
@@ -118,7 +158,7 @@ permissions:
   pull-requests: write
 jobs:
   acceptance:
-    uses: PatrickPriestley/acceptance-check/.github/workflows/acceptance.yml@v0.4.1
+    uses: PatrickPriestley/acceptance-check/.github/workflows/acceptance.yml@v0.5.0
 ```
 
 It checks the specs the pull request adds or changes against the pull request's base, uploads the videos and traces, and keeps one comment on the pull request up to date. When the description has an `## Acceptance criteria` list, every criterion is reported, including those without a test. An `Acceptance base: <commit hash>` line in the description compares against another commit.
@@ -137,7 +177,7 @@ permissions:
   pull-requests: write
 jobs:
   write:
-    uses: PatrickPriestley/acceptance-check/.github/workflows/acceptance-agent.yml@v0.4.1
+    uses: PatrickPriestley/acceptance-check/.github/workflows/acceptance-agent.yml@v0.5.0
     secrets:
       anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
 ```
@@ -169,6 +209,42 @@ Both skip pull requests from forks, which get no secrets and a read-only token. 
 The agent runs in Claude Code's default permission mode. It can write only in `specDir`, and its shell is limited to the check, git reads and read-only commands. Do not switch it to `acceptEdits`: that mode lets shell commands such as `sed -i` through. It refuses to start while other files in the project have uncommitted changes.
 
 A pilot run costs about $0.25 to $0.50 and takes 1 to 3 minutes.
+
+## Let an agent propose the criteria
+
+When a pull request changes the app but its description has no criteria, `acceptance-check propose --base=origin/main` has a read-only agent read the diff and the code it touches, and writes `proposal.md`: three to six criteria in the app's own words, and why. It can read files and git history and nothing else. It is not started at all when no file in the config's `sources` changed, and it proposes nothing for a change no user can see. It exits 3 in both cases.
+
+A person stays in charge of what "correct" means. The proposal is a comment, never a change to the description. In CI:
+
+```yaml
+name: Acceptance criteria proposal
+on:
+  pull_request:
+    types: [opened, reopened, ready_for_review, labeled]
+permissions:
+  contents: read
+  pull-requests: write
+jobs:
+  propose:
+    uses: PatrickPriestley/acceptance-check/.github/workflows/acceptance-propose.yml@v0.5.0
+    secrets:
+      anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
+```
+
+It skips drafts and descriptions that already have criteria. The `propose-acceptance-criteria` label asks again. To have tests written as soon as you paste the criteria into the description, give the test writer `write-on-criteria: true` and the `edited` event:
+
+```yaml
+on:
+  pull_request:
+    types: [labeled, edited]
+jobs:
+  write:
+    uses: PatrickPriestley/acceptance-check/.github/workflows/acceptance-agent.yml@v0.5.0
+    with:
+      write-on-criteria: true
+```
+
+It starts only when an edit adds the list to a description that had none, not on every later edit. A proposal costs well under the default $2 cap.
 
 ## Limits
 

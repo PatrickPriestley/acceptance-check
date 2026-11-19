@@ -2,6 +2,7 @@
 import { existsSync, readFileSync } from "node:fs";
 
 export const MARKER = "<!-- acceptance-agent -->";
+const MARKERS = [MARKER, "<!-- acceptance-proposal -->"];
 
 /** The comment body, with the artifact link filled in. */
 export function commentBody(report, { ARTIFACT_URL, RUN_URL = "" } = {}) {
@@ -31,10 +32,12 @@ export async function postComment(body, { GITHUB_TOKEN, GITHUB_REPOSITORY, PR_NU
     if (!response.ok) throw new Error(`${init.method ?? "GET"} ${path} failed: ${response.status} ${await response.text()}`);
     return response.json();
   };
+  // Verdicts and proposals each keep one comment, told apart by the marker they start with.
+  const marker = MARKERS.find((item) => body.startsWith(item)) ?? MARKER;
   let existing;
   for (let page = 1; !existing; page++) {
     const comments = await github(`/issues/${PR_NUMBER}/comments?per_page=100&page=${page}`);
-    existing = comments.find((comment) => comment.body?.startsWith(MARKER));
+    existing = comments.find((comment) => comment.body?.startsWith(marker));
     if (comments.length < 100) break;
   }
   const payload = { method: existing ? "PATCH" : "POST", body: JSON.stringify({ body }) };

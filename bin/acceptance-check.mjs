@@ -8,6 +8,7 @@ import { parseArgs } from "node:util";
 import { commentBody, postComment } from "../src/comment.mjs";
 import { CONFIG_FILE } from "../src/config.mjs";
 import { parseCriteria } from "../src/criteria.mjs";
+import { propose } from "../src/propose.mjs";
 import { listSpecs } from "../src/specs.mjs";
 import { verify } from "../src/verify.mjs";
 import { write } from "../src/write.mjs";
@@ -15,13 +16,22 @@ import { write } from "../src/write.mjs";
 const USAGE = `Usage: acceptance-check <command> [options]
 
 Commands:
-  verify [--base=<ref>] [--skip-build] [--criteria=<file.json>] <spec>...
-      Run the specs against this checkout and the base. Exit 0 when every criterion
-      is met or still holds, 2 when one is not, 1 when the check itself failed.
+  verify [--base=<ref>] [--skip-build] [--criteria=<file.json>] [--no-breaks] <spec>...
+      Run the specs against this checkout and the base, then run each @holds test
+      that names a break against a copy of this change with that break applied.
+      Exit 0 when every criterion is met or still holds and every break is caught,
+      2 when not, 1 when the check itself failed. --no-breaks skips the break check.
   write --body=<pr-body.md> --spec=<spec folder>/<name>.spec.ts [--base=<ref>]
         [--model=<model>] [--max-budget-usd=8] [--max-runs=4]
       Have an agent write one test per criterion in the description, then check them.
       Exit 3 when the description has no "## Acceptance criteria" list.
+  explore [--base=<ref>] [--skip-build]
+      Run the config's explorer against this checkout, and against the base when it
+      finds a violation. Exit 0 when nothing new is found, 2 for a new violation.
+  propose [--base=<ref>] [--model=<model>] [--max-budget-usd=2]
+      Have a read-only agent propose acceptance criteria for a change that has none.
+      Writes a comment-ready proposal.md. Exit 3 when no app source changed or the
+      agent finds no visible change.
   specs --base=<ref> [--all-when-none]
       Print the specs that this checkout adds or changes since the base, one per line.
       With --all-when-none, print every spec in specDir when none changed.
@@ -46,8 +56,9 @@ async function main() {
         "skip-build": { type: "boolean" },
         criteria: { type: "string" },
         "prepare-only": { type: "boolean" },
+        "no-breaks": { type: "boolean" },
       });
-      const result = await verify({ base: values.base, skipBuild: values["skip-build"], criteria: values.criteria, prepareOnly: values["prepare-only"], specs: positionals });
+      const result = await verify({ base: values.base, skipBuild: values["skip-build"], criteria: values.criteria, prepareOnly: values["prepare-only"], breaks: !values["no-breaks"], specs: positionals });
       return result.code;
     }
     case "write": {
@@ -62,6 +73,14 @@ async function main() {
       if (!values.body || !values.spec) return usage();
       const result = await write({ body: values.body, spec: values.spec, base: values.base, model: values.model, maxBudgetUsd: values["max-budget-usd"], maxRuns: values["max-runs"] });
       return result.code;
+    }
+    case "explore": {
+      const { values } = parse({ base: { type: "string" }, "skip-build": { type: "boolean" } });
+      return (await verify({ base: values.base, skipBuild: values["skip-build"], explore: true, specs: [] })).code;
+    }
+    case "propose": {
+      const { values } = parse({ base: { type: "string" }, model: { type: "string" }, "max-budget-usd": { type: "string" } });
+      return (await propose({ base: values.base, model: values.model, maxBudgetUsd: values["max-budget-usd"] })).code;
     }
     case "specs": {
       const { values } = parse({ base: { type: "string" }, "all-when-none": { type: "boolean" } });

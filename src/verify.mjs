@@ -15,9 +15,11 @@ const BUILT_IN_PLAYWRIGHT_CONFIG = fileURLToPath(new URL("./playwright.config.mj
 const log = (message) => console.log(`[acceptance-check] ${message}`);
 
 /**
- * @param {{ cwd?: string, base?: string, skipBuild?: boolean, criteria?: string, prepareOnly?: boolean, specs: string[] }} options
- * @returns {Promise<{ code: number, report: string | null }>} code 0 when every criterion is met or still holds,
- *   2 when one is not, 1 when the check itself failed; report is the path of report.md when one was written.
+ * @param {{ cwd?: string, base?: string, skipBuild?: boolean, criteria?: string, prepareOnly?: boolean, breaks?: boolean, explore?: boolean, specs: string[] }} options
+ * @returns {Promise<{ code: number, report: string | null }>} code 0 when every criterion is met or still holds
+ *   and every named break is caught, 2 when not, 1 when the check itself failed; report is the path of report.md
+ *   when one was written. `breaks: false` skips the break check. `explore: true` runs the configured explorer
+ *   instead of specs: 0 when it finds no violation on this change, or only one the base has too; 2 when it finds a new one.
  */
 export async function verify(options) {
   const root = findProjectRoot(resolve(options.cwd ?? process.cwd()));
@@ -107,13 +109,13 @@ export async function verify(options) {
     throw new Error("Cannot find @playwright/test. Add it to the project's devDependencies.");
   }
 
-  async function checkSide(side, appRoot) {
+  async function checkSide(side, appRoot, specs = options.specs) {
     mkdirSync(join(run, side), { recursive: true });
     const { app, origin } = await startApp(side, appRoot);
     log(`Checking criteria on ${side} at ${origin}`);
     const report = join(run, side, "report.json");
     const playwrightConfig = config.playwrightConfig ? join(root, config.playwrightConfig) : BUILT_IN_PLAYWRIGHT_CONFIG;
-    const code = await exec(process.execPath, [playwrightCli(), "test", "--config", playwrightConfig, ...options.specs], {
+    const code = await exec(process.execPath, [playwrightCli(), "test", "--config", playwrightConfig, ...specs], {
       env: {
         ...process.env,
         ACCEPTANCE_BASE_URL: origin,
@@ -130,7 +132,111 @@ export async function verify(options) {
     return parseReport(report);
   }
 
-  function writeReport(baseSha, headResults, baseResults, baseError, criteria) {
+  // The break check. A @holds test passes on both sides by design, so the comparison
+  // with the base cannot show that it would ever fail. Each such test names a break
+  // from the config; the break is applied to a copy of this change, which is built
+  // and checked again. The test must fail there.
+  async function checkBreaks(headResults) {
+    const claims = [...headResults.values()].filter((test) => test.kind === "holds" && test.passed && test.catches.length);
+    if (options.breaks === false || !claims.length) return [];
+    const known = new Map(config.breaks.map((item) => [item.name, item]));
+    const rows = [];
+    let tree;
+    for (const name of [...new Set(claims.flatMap((test) => test.catches))]) {
+      const tests = claims.filter((test) => test.catches.includes(name));
+      const fault = known.get(name);
+      if (!fault) {
+        rows.push(...tests.map((test) => ({ test, name, outcome: "unknown" })));
+        continue;
+      }
+      tree ??= await prepareBreakTree();
+      const file = join(tree, fault.file);
+      const original = readFileSync(file, "utf8");
+      const found = original.split(fault.find).length - 1;
+      if (found !== 1) throw new Error(`Break ${name}: ${fault.file} must contain its find text exactly once, but contains it ${found} times. Update breaks in acceptance.config.mjs.`);
+      writeFileSync(file, original.replace(fault.find, () => fault.replace));
+      let results;
+      const buildLog = join(run, "breaks", `${name}-build.log`);
+      try {
+        await step(`Building with break ${name}`, config.build, { cwd: tree, logFile: buildLog });
+        results = await checkSide(`break-${name}`, tree, [...new Set(tests.map((test) => join(config.specDir, test.file)))]);
+      } catch (error) {
+        // A break that does not build is a fault in the config, not in a test.
+        // Report it and carry on, so one bad break does not hide the others.
+        if (!String(error.message).startsWith(`Building with break ${name} failed`)) throw error;
+        log(`Break ${name} does not build. See ${shown(buildLog)}`);
+        rows.push(...tests.map((test) => ({ test, name, outcome: "unbuildable" })));
+        continue;
+      } finally {
+        writeFileSync(file, original);
+      }
+      for (const test of tests) {
+        const result = results.get(`${test.file}::${test.title}`);
+        const outcome = !result ? "missing" : result.skipped ? "skipped" : result.passed ? "weak" : "caught";
+        rows.push({ test, name, outcome, error: result?.error ?? "" });
+      }
+    }
+    return rows;
+  }
+
+  // One exported copy of this change, uncommitted edits to tracked files included,
+  // with its own dependencies. Each break edits, builds and restores it in turn.
+  async function prepareBreakTree() {
+    const prefix = execFileSync("git", ["rev-parse", "--show-prefix"], { cwd: root, encoding: "utf8" }).trim();
+    const snapshot = execFileSync("git", ["stash", "create"], { cwd: root, encoding: "utf8" }).trim() || "HEAD";
+    const tree = join(run, "breaks", "tree");
+    const buildLog = join(run, "breaks", "install.log");
+    mkdirSync(tree, { recursive: true });
+    await step("Copying this change for the break check", ["sh", "-c", `git -C "$(git rev-parse --show-toplevel)" archive ${snapshot} | tar -x -C "${tree}"`], { logFile: buildLog });
+    await step("Installing dependencies for the break check", config.install, { cwd: join(tree, prefix), logFile: buildLog });
+    return join(tree, prefix);
+  }
+
+  // Runs the configured explorer against one running copy. Exploration is random, so
+  // its result is evidence, not proof: a pass means nothing was found this time.
+  async function exploreSide(side, appRoot) {
+    const dir = join(run, `explore-${side}`);
+    mkdirSync(join(dir, "output"), { recursive: true });
+    const { app, origin } = await startApp(`explore-${side}`, appRoot);
+    log(`Exploring ${side} at ${origin}`);
+    const [command, ...args] = config.explore.command.map((part) => part.replaceAll("{url}", origin).replaceAll("{output}", join(dir, "output")));
+    const logFile = join(dir, "explore.log");
+    const code = await exec(command === "node" ? process.execPath : command, args, { logFile, echo: true }).exited;
+    app.kill("SIGTERM");
+    await app.exited;
+    const tail = existsSync(logFile) ? readFileSync(logFile, "utf8").replace(/\u001b\[[0-9;]*m/g, "").trim().split("\n").slice(-25).join("\n") : "";
+    // 0: no violation. 2: a violation. Anything else means the explorer itself
+    // failed, which must never read as a pass or as "also on the base".
+    if (code !== 0 && code !== 2) throw new Error(`The explorer failed on ${side} (exit ${code}), so nothing was explored. See ${shown(logFile)}:\n${tail.split("\n").slice(-8).join("\n")}`);
+    return { code, output: join(dir, "output"), log: logFile, tail };
+  }
+
+  function writeExploreReport(baseSha, head, base, baseError) {
+    const outcome = head.code === 0 ? EXPLORE_OUTCOMES.clear : !base ? EXPLORE_OUTCOMES.unchecked : base.code === 0 ? EXPLORE_OUTCOMES.new : EXPLORE_OUTCOMES.existing;
+    const side = (result) => (!result ? "Not run" : result.code === 0 ? "No violation" : "Violation");
+    const lines = [
+      "<!-- acceptance-explore -->",
+      "## Exploration",
+      "",
+      `${config.explore.description ?? "The explorer"} ran against this change${base ? ` and, because it found something, against the base \`${baseSha.slice(0, 7)}\`` : ""}${config.report.setting ? `, ${config.report.setting}` : ""}. Exploration is random: no violation means none was found this time.`,
+      "",
+      "| This change | Base | Result |",
+      "|---|---|---|",
+      `| ${side(head)} | ${side(base)} | ${outcome.ok ? (outcome.warn ? "⚠️" : "✅") : "❌"} ${outcome.label} |`,
+      "",
+    ];
+    if (baseError) lines.push(`The base could not run: ${cell(baseError)}`, "");
+    for (const [name, result] of [["This change", head], ["Base", base]]) {
+      if (!result || result.code === 0) continue;
+      lines.push(`<details><summary>${name}: the end of the explorer's log</summary>`, "", "```", result.tail, "```", "", `Trace and log: \`${relative(run, dirname(result.log))}/\``, "", "</details>", "");
+    }
+    const file = join(run, "explore.md");
+    writeFileSync(file, `${lines.join("\n")}\n`);
+    writeFileSync(join(run, "explore.json"), JSON.stringify({ base: baseSha, outcome: outcome.key, head: { code: head.code, output: head.output }, base: base && { code: base.code, output: base.output } }, null, 2));
+    return { file, outcome };
+  }
+
+  function writeReport(baseSha, headResults, baseResults, baseError, criteria, breakRows) {
     const rows = reportRows(headResults, baseResults, criteria);
     const status = (side) => (side ? (side.skipped ? "Skipped" : side.passed ? "Pass" : "Fail") : "Not run");
     const icon = (v) => (v.warn ? "⚠️" : v.ok ? "✅" : "❌");
@@ -167,9 +273,34 @@ export async function verify(options) {
       [criteria ? "Every criterion in the pull request description is listed above." : "Only the criteria above were checked.", config.report.limits]
         .filter(Boolean).join(" "),
     );
+    const unclaimed = config.breaks.length && options.breaks !== false
+      ? rows.filter((row) => row.kind === "holds" && row.passed && !row.catches.length)
+      : [];
+    if (breakRows.length || unclaimed.length) {
+      lines.push(
+        "",
+        "### Break check",
+        "",
+        "A `@holds` test passes on both sides, so the comparison above cannot show it would ever fail. Each one names a break from the config; the break was applied to a copy of this change, and the test must fail there.",
+        "",
+      );
+      if (breakRows.length) {
+        lines.push("| Test | Break | With the break | Result |", "|---|---|---|---|");
+        for (const row of breakRows) {
+          const result = BREAK_OUTCOMES[row.outcome];
+          lines.push(`| ${cell(row.test.title)} | \`${row.name}\` | ${result.status} | ${result.ok ? "✅" : "❌"} ${result.label} |`);
+        }
+        lines.push("");
+      }
+      if (unclaimed.length) lines.push(`${unclaimed.length} \`@holds\` ${unclaimed.length === 1 ? "test names" : "tests name"} no break, so ${unclaimed.length === 1 ? "it was" : "they were"} not checked this way: ${unclaimed.map((row) => cell(row.title)).join("; ")}.`, "");
+    }
     reportFile = join(run, "report.md");
     writeFileSync(reportFile, `${lines.join("\n")}\n`);
-    writeFileSync(join(run, "report.json"), JSON.stringify({ base: baseSha, criteria: rows.map(({ verdict: v, ...row }) => ({ ...row, verdict: v.label, ok: v.ok })) }, null, 2));
+    writeFileSync(join(run, "report.json"), JSON.stringify({
+      base: baseSha,
+      criteria: rows.map(({ verdict: v, ...row }) => ({ ...row, verdict: v.label, ok: v.ok })),
+      breaks: breakRows.map((row) => ({ title: row.test.title, file: row.test.file, break: row.name, outcome: row.outcome, ok: BREAK_OUTCOMES[row.outcome].ok })),
+    }, null, 2));
     return rows;
   }
 
@@ -220,7 +351,8 @@ export async function verify(options) {
   }
 
   async function main() {
-    if (!options.specs.length && !options.prepareOnly) throw new Error("Name at least one spec file.");
+    if (options.explore && !config.explore) throw new Error("acceptance.config.mjs has no explore command.");
+    if (!options.specs.length && !options.prepareOnly && !options.explore) throw new Error("Name at least one spec file.");
     for (const spec of options.specs) if (!existsSync(resolve(root, spec))) throw new Error(`No such spec: ${spec}`);
     mkdirSync(run, { recursive: true });
     log(`Run folder ${shown(run)}`);
@@ -242,16 +374,43 @@ export async function verify(options) {
       log(`Base unavailable: ${baseError}`);
     }
 
+    if (options.explore) {
+      const head = await exploreSide("head", root);
+      // The base runs only to tell a new violation from one that was already there.
+      let base;
+      if (head.code !== 0 && !baseError) {
+        try {
+          base = await exploreSide("base", baseTree);
+        } catch (error) {
+          baseError = error.message;
+        }
+      }
+      const { file, outcome } = writeExploreReport(baseSha, head, base, baseError);
+      reportFile = file;
+      console.log("");
+      console.log(`  ${outcome.ok ? (outcome.warn ? "WARN" : "OK  ") : "FAIL"}  ${outcome.label}`);
+      console.log("");
+      log(`Report ${shown(file)}`);
+      if (process.env.GITHUB_OUTPUT) appendFileSync(process.env.GITHUB_OUTPUT, `report=${file}\nrun=${run}\n`);
+      return outcome.ok ? 0 : 2;
+    }
+
     const headResults = await checkSide("head", root);
     const baseResults = baseError ? undefined : await checkSide("base", baseTree);
-    const rows = writeReport(baseSha, headResults, baseResults, baseError, criteria);
+    const breakRows = await checkBreaks(headResults);
+    const rows = writeReport(baseSha, headResults, baseResults, baseError, criteria, breakRows);
 
     console.log("");
     for (const row of rows) console.log(`  ${row.verdict.warn ? "WARN" : row.verdict.ok ? "OK  " : "FAIL"}  ${row.verdict.label.padEnd(32)} ${row.title}`);
+    for (const row of breakRows) {
+      const result = BREAK_OUTCOMES[row.outcome];
+      console.log(`  ${result.ok ? "OK  " : "FAIL"}  ${`${result.label} (${row.name})`.padEnd(32)} ${row.test.title}`);
+    }
     console.log("");
     log(`Report ${shown(join(run, "report.md"))}`);
     if (process.env.GITHUB_OUTPUT) appendFileSync(process.env.GITHUB_OUTPUT, `report=${join(run, "report.md")}\nrun=${run}\n`);
-    return rows.length && rows.every((row) => row.verdict.ok) ? 0 : 2;
+    const breaksOk = breakRows.every((row) => BREAK_OUTCOMES[row.outcome].ok);
+    return rows.length && rows.every((row) => row.verdict.ok) && breaksOk ? 0 : 2;
   }
 
   let code = 1;
@@ -262,7 +421,7 @@ export async function verify(options) {
   }
   await stopAll();
   for (const [signal, handler] of handlers) process.off(signal, handler);
-  log(code === 0 && options.prepareOnly ? "Builds ready." : code === 0 ? "PASS: every criterion met or still holds." : code === 2 ? "FAIL: at least one criterion is not met or not proven." : `ERROR. Evidence kept in ${shown(run)}`);
+  log(code === 0 && options.prepareOnly ? "Builds ready." : code === 0 && options.explore ? "PASS: no new violation found." : code === 2 && options.explore ? "FAIL: exploration found a new violation." : code === 0 ? "PASS: every criterion met or still holds." : code === 2 ? "FAIL: at least one criterion is not met or not proven, or a break was not caught." : `ERROR. Evidence kept in ${shown(run)}`);
   return { code, report: reportFile };
 }
 
@@ -289,6 +448,7 @@ export function parseReport(file) {
         passed: test?.status === "expected" && result?.status === "passed",
         skipped: test?.status === "skipped",
         unverifiable: annotations.find((item) => item.type === "unverifiable")?.description ?? null,
+        catches: [...new Set(annotations.filter((item) => item.type === "catches" && item.description).map((item) => item.description.trim()))],
         error: summarizeError(result?.error?.message),
         evidence: attachment("video") ?? attachment("trace") ?? attachment("screenshot"),
       });
@@ -317,5 +477,23 @@ export function reportRows(headResults, baseResults, criteria) {
       ]
     : tests.map(row);
 }
+
+/** What exploration found. */
+export const EXPLORE_OUTCOMES = {
+  clear: { key: "clear", ok: true, label: "No violation found" },
+  new: { key: "new", ok: false, label: "New violation: found on this change, not on the base" },
+  existing: { key: "existing", ok: true, warn: true, label: "Violation also on the base: not caused by this change" },
+  unchecked: { key: "unchecked", ok: false, label: "Violation on this change; the base could not run" },
+};
+
+/** How a @holds test fared with the break it names. */
+export const BREAK_OUTCOMES = {
+  caught: { ok: true, status: "Fail", label: "Caught" },
+  weak: { ok: false, status: "Pass", label: "Weak: still passes with the break" },
+  skipped: { ok: false, status: "Skipped", label: "Not checked: skipped with the break" },
+  missing: { ok: false, status: "Not run", label: "Not checked: did not run with the break" },
+  unknown: { ok: false, status: "Not run", label: "Unknown break: not in the config" },
+  unbuildable: { ok: false, status: "Not run", label: "Break does not build: fix it in the config" },
+};
 
 const cell = (text) => String(text).replace(/\|/g, "\\|").replace(/\n/g, " ");

@@ -30,4 +30,7 @@ export default {
     setting: "with test data",
     limits: "",
   },
+  // Optional deliberate faults. A @holds test names the one it should catch with
+  // annotation: { type: "catches", description: "<name>" }, and must fail with it.
+  breaks: [],
 };
