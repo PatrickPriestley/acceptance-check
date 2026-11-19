@@ -36,6 +36,24 @@ export async function write(options) {
   }
 }
 
+/** The Exploration section of the agent prompt. */
+export function describeExplore(explore, command) {
+  const files = explore.properties.map((file) => `\`${file}\``).join(", ");
+  return `## Exploration
+
+${explore.description ?? "This app has a property-based explorer"}. You may add properties in ${files}: promises that must hold after any sequence of actions, checked by random exploration of the running app.
+
+- If this change adds or alters state a user can see (counts, ticks, quantities, what survives navigation or a reload) and makes a promise that must hold after any sequence of actions, add or adjust a property there. Guard it so it cannot pass just because something was not observed. If there is no such promise, change nothing there and say why.
+- Run the explorer with exactly this command, allowing it up to 10 minutes:
+  \`${command}\`
+  It explores this change, and the base as well when it finds a violation. Read the \`explore.md\` it names.
+- "New violation": read the trace and log in the folder the report names. If the property is right, the change has a bug: add one more test to the spec that replays the shortest path the trace shows, tagged \`@holds\` and titled "Found by exploration: <what goes wrong>". It fails on this change, and that failure is the finding. If the property is wrong, fix the property instead.
+- "Violation also on the base": not caused by this change. Report it and move on.
+- Run the explorer at most 2 times.
+
+`;
+}
+
 /** The config's breaks, as a list for the agent prompt. */
 export function describeBreaks(breaks) {
   if (!breaks.length) return "This app's config defines no breaks, so name none. Say in your report which breaks would let the check prove the `@holds` tests can fail.";
@@ -81,7 +99,13 @@ async function run(options) {
   const quote = (text) => (/^[\w./@:=-]+$/.test(text) ? text : `'${text.replaceAll("'", "'\\''")}'`);
   const checkPrefix = `node ${quote(BIN)} verify`;
   const check = `${checkPrefix} --base=${base} --skip-build --criteria=${quote(relative(root, criteriaFile))} ${spec}`;
+  // Property files are inside specDir (the config requires it), so exploration
+  // needs no write access beyond what the agent already has: only the run command.
+  const properties = config.explore?.properties ?? [];
+  const explorePrefix = `node ${quote(BIN)} explore`;
   const prompt = readFileSync(PROMPT, "utf8")
+    .replaceAll("{{EXPLORE_FILES}}", properties.length ? ` and the property files ${properties.map((file) => `\`${file}\``).join(", ")}` : "")
+    .replaceAll("{{EXPLORE}}", config.explore ? describeExplore(config.explore, `${explorePrefix} --base=${base} --skip-build`) : "")
     .replaceAll("{{SPEC}}", spec)
     .replaceAll("{{BASE}}", base)
     .replaceAll("{{SKILL}}", inProject(SKILL))
@@ -93,7 +117,8 @@ async function run(options) {
   // File writes are limited to the spec folder. Shell commands that write files
   // are refused; Claude Code still allows read-only ones such as cat.
   const tools = ["Read", "Glob", "Grep", `Write(${config.specDir}/**)`, `Edit(${config.specDir}/**)`,
-    `Bash(${checkPrefix}:*)`, "Bash(git diff:*)", "Bash(git log:*)", "Bash(git show:*)"];
+    `Bash(${checkPrefix}:*)`, "Bash(git diff:*)", "Bash(git log:*)", "Bash(git show:*)",
+    ...(config.explore ? [`Bash(${explorePrefix}:*)`] : [])];
   log("Agent is writing the tests");
   let result, notes;
   try {
@@ -103,7 +128,8 @@ async function run(options) {
     throw error;
   }
 
-  const outside = changedPaths().filter((path) => path !== spec);
+  const allowed = [spec, ...properties];
+  const outside = changedPaths().filter((path) => !allowed.includes(path));
   if (outside.length) {
     const tracked = outside.filter((path) => git("ls-files", "--", path).trim());
     if (tracked.length) git("checkout", "--", ...tracked);
@@ -117,6 +143,9 @@ async function run(options) {
   const outputFile = process.env.GITHUB_OUTPUT;
   delete process.env.GITHUB_OUTPUT;
   const checked = await verify({ cwd: root, base, skipBuild: true, criteria: criteriaFile, specs: [spec] });
+  // A property the agent added or changed is explored again in a separate run, too.
+  const changedProperties = changedPaths().filter((path) => properties.includes(path));
+  const explored = changedProperties.length ? await verify({ cwd: root, base, skipBuild: true, explore: true, specs: [] }) : null;
   if (outputFile) process.env.GITHUB_OUTPUT = outputFile;
 
   if (checked.report) {
@@ -132,8 +161,13 @@ async function run(options) {
       "</details>",
       "",
     ].join("\n"));
+    if (explored?.report) {
+      const exploration = readFileSync(explored.report, "utf8").replace("<!-- acceptance-explore -->\n## Exploration", `### Exploration\n\nThe agent changed ${changedProperties.map((file) => `\`${file}\``).join(", ")}, so it was explored again in a separate run.`);
+      appendFileSync(checked.report, `\n${exploration}`);
+    }
   }
-  if (outputFile && checked.report) appendFileSync(outputFile, `report=${checked.report}\nspec=${spec}\n`);
-  log(checked.code === 0 ? "PASS" : checked.code === 2 ? "Some criteria are not met, not proven or have no test" : "The check failed to run");
-  return { code: checked.code, report: checked.report, spec };
+  const code = checked.code !== 0 ? checked.code : explored && explored.code !== 0 ? explored.code : 0;
+  if (outputFile && checked.report) appendFileSync(outputFile, `report=${checked.report}\nspec=${spec}\nfiles=${[spec, ...changedProperties].join(" ")}\n`);
+  log(code === 0 ? "PASS" : code === 2 ? "Some criteria are not met, not proven or have no test, or exploration found a new violation" : "The check failed to run");
+  return { code, report: checked.report, spec };
 }

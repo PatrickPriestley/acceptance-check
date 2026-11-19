@@ -25,6 +25,9 @@ Commands:
         [--model=<model>] [--max-budget-usd=8] [--max-runs=4]
       Have an agent write one test per criterion in the description, then check them.
       Exit 3 when the description has no "## Acceptance criteria" list.
+  explore [--base=<ref>] [--skip-build]
+      Run the config's explorer against this checkout, and against the base when it
+      finds a violation. Exit 0 when nothing new is found, 2 for a new violation.
   propose [--base=<ref>] [--model=<model>] [--max-budget-usd=2]
       Have a read-only agent propose acceptance criteria for a change that has none.
       Writes a comment-ready proposal.md. Exit 3 when no app source changed or the
@@ -70,6 +73,10 @@ async function main() {
       if (!values.body || !values.spec) return usage();
       const result = await write({ body: values.body, spec: values.spec, base: values.base, model: values.model, maxBudgetUsd: values["max-budget-usd"], maxRuns: values["max-runs"] });
       return result.code;
+    }
+    case "explore": {
+      const { values } = parse({ base: { type: "string" }, "skip-build": { type: "boolean" } });
+      return (await verify({ base: values.base, skipBuild: values["skip-build"], explore: true, specs: [] })).code;
     }
     case "propose": {
       const { values } = parse({ base: { type: "string" }, model: { type: "string" }, "max-budget-usd": { type: "string" } });

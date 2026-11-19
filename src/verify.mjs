@@ -15,10 +15,11 @@ const BUILT_IN_PLAYWRIGHT_CONFIG = fileURLToPath(new URL("./playwright.config.mj
 const log = (message) => console.log(`[acceptance-check] ${message}`);
 
 /**
- * @param {{ cwd?: string, base?: string, skipBuild?: boolean, criteria?: string, prepareOnly?: boolean, breaks?: boolean, specs: string[] }} options
+ * @param {{ cwd?: string, base?: string, skipBuild?: boolean, criteria?: string, prepareOnly?: boolean, breaks?: boolean, explore?: boolean, specs: string[] }} options
  * @returns {Promise<{ code: number, report: string | null }>} code 0 when every criterion is met or still holds
  *   and every named break is caught, 2 when not, 1 when the check itself failed; report is the path of report.md
- *   when one was written. `breaks: false` skips the break check.
+ *   when one was written. `breaks: false` skips the break check. `explore: true` runs the configured explorer
+ *   instead of specs: 0 when it finds no violation on this change, or only one the base has too; 2 when it finds a new one.
  */
 export async function verify(options) {
   const root = findProjectRoot(resolve(options.cwd ?? process.cwd()));
@@ -183,6 +184,47 @@ export async function verify(options) {
     return join(tree, prefix);
   }
 
+  // Runs the configured explorer against one running copy. Exploration is random, so
+  // its result is evidence, not proof: a pass means nothing was found this time.
+  async function exploreSide(side, appRoot) {
+    const dir = join(run, `explore-${side}`);
+    mkdirSync(join(dir, "output"), { recursive: true });
+    const { app, origin } = await startApp(`explore-${side}`, appRoot);
+    log(`Exploring ${side} at ${origin}`);
+    const [command, ...args] = config.explore.command.map((part) => part.replaceAll("{url}", origin).replaceAll("{output}", join(dir, "output")));
+    const logFile = join(dir, "explore.log");
+    const code = await exec(command === "node" ? process.execPath : command, args, { logFile, echo: true }).exited;
+    app.kill("SIGTERM");
+    await app.exited;
+    const tail = existsSync(logFile) ? readFileSync(logFile, "utf8").replace(/\u001b\[[0-9;]*m/g, "").trim().split("\n").slice(-25).join("\n") : "";
+    return { code, output: join(dir, "output"), log: logFile, tail };
+  }
+
+  function writeExploreReport(baseSha, head, base, baseError) {
+    const outcome = head.code === 0 ? EXPLORE_OUTCOMES.clear : !base ? EXPLORE_OUTCOMES.unchecked : base.code === 0 ? EXPLORE_OUTCOMES.new : EXPLORE_OUTCOMES.existing;
+    const side = (result) => (!result ? "Not run" : result.code === 0 ? "No violation" : `Violation (exit ${result.code})`);
+    const lines = [
+      "<!-- acceptance-explore -->",
+      "## Exploration",
+      "",
+      `${config.explore.description ?? "The explorer"} ran against this change${base ? ` and, because it found something, against the base \`${baseSha.slice(0, 7)}\`` : ""}${config.report.setting ? `, ${config.report.setting}` : ""}. Exploration is random: no violation means none was found this time.`,
+      "",
+      "| This change | Base | Result |",
+      "|---|---|---|",
+      `| ${side(head)} | ${side(base)} | ${outcome.ok ? (outcome.warn ? "⚠️" : "✅") : "❌"} ${outcome.label} |`,
+      "",
+    ];
+    if (baseError) lines.push(`The base could not run: ${cell(baseError)}`, "");
+    for (const [name, result] of [["This change", head], ["Base", base]]) {
+      if (!result || result.code === 0) continue;
+      lines.push(`<details><summary>${name}: the end of the explorer's log</summary>`, "", "```", result.tail, "```", "", `Trace and log: \`${relative(run, dirname(result.log))}/\``, "", "</details>", "");
+    }
+    const file = join(run, "explore.md");
+    writeFileSync(file, `${lines.join("\n")}\n`);
+    writeFileSync(join(run, "explore.json"), JSON.stringify({ base: baseSha, outcome: outcome.key, head: { code: head.code, output: head.output }, base: base && { code: base.code, output: base.output } }, null, 2));
+    return { file, outcome };
+  }
+
   function writeReport(baseSha, headResults, baseResults, baseError, criteria, breakRows) {
     const rows = reportRows(headResults, baseResults, criteria);
     const status = (side) => (side ? (side.skipped ? "Skipped" : side.passed ? "Pass" : "Fail") : "Not run");
@@ -298,7 +340,8 @@ export async function verify(options) {
   }
 
   async function main() {
-    if (!options.specs.length && !options.prepareOnly) throw new Error("Name at least one spec file.");
+    if (options.explore && !config.explore) throw new Error("acceptance.config.mjs has no explore command.");
+    if (!options.specs.length && !options.prepareOnly && !options.explore) throw new Error("Name at least one spec file.");
     for (const spec of options.specs) if (!existsSync(resolve(root, spec))) throw new Error(`No such spec: ${spec}`);
     mkdirSync(run, { recursive: true });
     log(`Run folder ${shown(run)}`);
@@ -318,6 +361,20 @@ export async function verify(options) {
       if (options.prepareOnly) throw error;
       baseError = error.message;
       log(`Base unavailable: ${baseError}`);
+    }
+
+    if (options.explore) {
+      const head = await exploreSide("head", root);
+      // The base runs only to tell a new violation from one that was already there.
+      const base = head.code !== 0 && !baseError ? await exploreSide("base", baseTree) : undefined;
+      const { file, outcome } = writeExploreReport(baseSha, head, base, baseError);
+      reportFile = file;
+      console.log("");
+      console.log(`  ${outcome.ok ? (outcome.warn ? "WARN" : "OK  ") : "FAIL"}  ${outcome.label}`);
+      console.log("");
+      log(`Report ${shown(file)}`);
+      if (process.env.GITHUB_OUTPUT) appendFileSync(process.env.GITHUB_OUTPUT, `report=${file}\nrun=${run}\n`);
+      return outcome.ok ? 0 : 2;
     }
 
     const headResults = await checkSide("head", root);
@@ -346,7 +403,7 @@ export async function verify(options) {
   }
   await stopAll();
   for (const [signal, handler] of handlers) process.off(signal, handler);
-  log(code === 0 && options.prepareOnly ? "Builds ready." : code === 0 ? "PASS: every criterion met or still holds." : code === 2 ? "FAIL: at least one criterion is not met or not proven, or a break was not caught." : `ERROR. Evidence kept in ${shown(run)}`);
+  log(code === 0 && options.prepareOnly ? "Builds ready." : code === 0 && options.explore ? "PASS: no new violation found." : code === 2 && options.explore ? "FAIL: exploration found a new violation." : code === 0 ? "PASS: every criterion met or still holds." : code === 2 ? "FAIL: at least one criterion is not met or not proven, or a break was not caught." : `ERROR. Evidence kept in ${shown(run)}`);
   return { code, report: reportFile };
 }
 
@@ -402,6 +459,14 @@ export function reportRows(headResults, baseResults, criteria) {
       ]
     : tests.map(row);
 }
+
+/** What exploration found. */
+export const EXPLORE_OUTCOMES = {
+  clear: { key: "clear", ok: true, label: "No violation found" },
+  new: { key: "new", ok: false, label: "New violation: found on this change, not on the base" },
+  existing: { key: "existing", ok: true, warn: true, label: "Violation also on the base: not caused by this change" },
+  unchecked: { key: "unchecked", ok: false, label: "Violation on this change; the base could not run" },
+};
 
 /** How a @holds test fared with the break it names. */
 export const BREAK_OUTCOMES = {

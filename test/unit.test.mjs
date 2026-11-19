@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -131,4 +131,16 @@ test("a proposal edits its own comment and leaves the verdicts comment alone", a
   } finally {
     server.close();
   }
+});
+
+test("explore needs a command and property files inside specDir", () => {
+  const root = mkdtempSync(join(tmpdir(), "acceptance-explore-"));
+  mkdirSync(join(root, "t"));
+  writeFileSync(join(root, "spec.ts"), "");
+  writeFileSync(join(root, "t", "props.ts"), "");
+  const base = { install: ["npm", "ci"], build: ["npm", "run", "build"], buildOutputs: ["a"], sources: ["b"], start: { command: ["node"], health: "/h" }, specDir: "t" };
+  assert.throws(() => validateConfig(root, { ...base, explore: { command: "bombadil", properties: [] } }), /explore\.command must be a command.*explore\.properties must list at least one file/);
+  assert.throws(() => validateConfig(root, { ...base, explore: { command: ["x"], properties: ["spec.ts"] } }), /explore\.properties file spec\.ts must be inside specDir, where the agent may write/);
+  assert.equal(validateConfig(root, { ...base, explore: { command: ["x", "{url}"], properties: ["t/props.ts"] } }).explore.properties[0], "t/props.ts");
+  assert.equal(validateConfig(root, base).explore, null);
 });

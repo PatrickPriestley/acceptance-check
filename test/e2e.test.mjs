@@ -2,7 +2,7 @@
 // commits: the app before the fix, and after it. Needs Chromium for Playwright.
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { chmodSync, cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { after, before, test } from "node:test";
 import { fileURLToPath } from "node:url";
@@ -35,7 +35,7 @@ before(() => {
 after(() => rmSync(project, { recursive: true, force: true }));
 
 const report = (output) => {
-  const path = output.match(/Report (\S+report\.md)/)?.[1];
+  const path = output.match(/Report (\S+\.md)/)?.[1];
   assert.ok(path, `a report was written:\n${output}`);
   return readFileSync(join(project, path), "utf8");
 };
@@ -133,6 +133,113 @@ process.exitCode = r.code;`;
   assert.equal(run.status, 1, run.stdout + run.stderr);
   assert.match(run.stderr, /The agent did not run: Invalid API key · Please run \/login\. Its log is in \.acceptance\/agent\/.+\/agent\.jsonl/);
   assert.doesNotMatch(run.stderr, /wrote no spec/);
+});
+
+test("explore reports no violation, a new one, and one the base has too", () => {
+  const properties = join(project, "tests", "properties.mjs");
+  const original = readFileSync(properties, "utf8");
+  const withProperty = (body) => writeFileSync(properties, original.replace("export const properties = {", `export const properties = {\n${body}`));
+  try {
+    const clear = cli("explore", `--base=${before_}`);
+    assert.equal(clear.status, 0, clear.stdout + clear.stderr);
+    const clearReport = report(clear.stdout);
+    assert.match(clearReport, /^<!-- acceptance-explore -->\n## Exploration/);
+    assert.match(clearReport, /\| No violation \| Not run \| ✅ No violation found \|/);
+
+    // Only this change rejects blank names in the page script, so this fails here and not on the base.
+    withProperty(`  async noBlankCheck(url) { return !(await (await fetch(url)).text()).includes("if (true && !name)"); },`);
+    const fresh = cli("explore", `--base=${before_}`, "--skip-build");
+    assert.equal(fresh.status, 2, fresh.stdout + fresh.stderr);
+    const freshReport = report(fresh.stdout);
+    assert.match(freshReport, /\| Violation \(exit 1\) \| No violation \| ❌ New violation: found on this change, not on the base \|/);
+    assert.match(freshReport, /Violation: noBlankCheck \(round 1\)/);
+
+    withProperty(`  async neverHolds() { return false; },`);
+    const existing = cli("explore", `--base=${before_}`, "--skip-build");
+    assert.equal(existing.status, 0, existing.stdout + existing.stderr);
+    assert.match(report(existing.stdout), /\| Violation \(exit 1\) \| Violation \(exit 1\) \| ⚠️ Violation also on the base: not caused by this change \|/);
+  } finally {
+    writeFileSync(properties, original);
+  }
+});
+
+test("the writer keeps a property the agent adds in the spec folder, explores it again and names it for the commit", () => {
+  const dir = join(project, ".acceptance");
+  mkdirSync(dir, { recursive: true });
+  const spec = join(project, "tests", "pr-2.spec.ts");
+  const properties = join(project, "tests", "properties.mjs");
+  const original = readFileSync(properties, "utf8");
+  // Stands in for Claude Code: writes a spec and a property, then reports.
+  const agent = join(dir, "fake-writer.mjs");
+  writeFileSync(agent, `#!/usr/bin/env node
+import { readFileSync, writeFileSync } from "node:fs";
+writeFileSync("tests/pr-2.spec.ts", \`import { test, expect } from "./fixtures";
+test("A real name is added to the list", { tag: "@holds", annotation: { type: "catches", description: "items-not-saved" } }, async ({ page }) => {
+  await page.goto("/");
+  const form = page.getByRole("form", { name: "Add item" });
+  await form.getByLabel("Item name").fill("Tea");
+  await form.getByRole("button", { name: "Add" }).click();
+  await expect(page.getByRole("region", { name: "Items" }).getByRole("listitem")).toHaveText(["Tea"]);
+});
+\`);
+const file = "tests/properties.mjs";
+writeFileSync(file, readFileSync(file, "utf8").replace("export const properties = {", "export const properties = {\\n  async healthAnswers(url) { return (await fetch(url + '/health')).ok; },"));
+console.log(JSON.stringify({ type: "result", subtype: "success", is_error: false, num_turns: 5, total_cost_usd: 0.2, result: "Wrote one @holds test and a health property." }));
+`);
+  chmodSync(agent, 0o755);
+  writeFileSync(join(dir, "body2.md"), "## Acceptance criteria\n\n- A real name is added to the list\n");
+  const outputs = join(dir, "github-output");
+  writeFileSync(outputs, "");
+  const script = `import { write } from ${JSON.stringify(join(packageRoot, "src/write.mjs"))};
+const r = await write({ body: ".acceptance/body2.md", spec: "tests/pr-2.spec.ts", base: ${JSON.stringify(before_)}, agent: ${JSON.stringify(agent)} });
+process.exitCode = r.code;`;
+  try {
+    const run = spawnSync(process.execPath, ["--input-type=module", "-e", script], { cwd: project, encoding: "utf8", timeout: 400_000, env: { ...process.env, GITHUB_OUTPUT: outputs } });
+    assert.equal(run.status, 0, run.stdout + run.stderr);
+    const out = readFileSync(outputs, "utf8");
+    assert.match(out, /^files=tests\/pr-2\.spec\.ts tests\/properties\.mjs$/m);
+    const md = readFileSync(out.match(/^report=(.+)$/m)[1], "utf8");
+    assert.match(md, /\| A real name is added to the list \| Must still hold \| Pass \| Pass \| ✅ Still holds \|/);
+    assert.match(md, /\| A real name is added to the list \| `items-not-saved` \| Fail \| ✅ Caught \|/);
+    assert.match(md, /### Exploration\n\nThe agent changed `tests\/properties\.mjs`, so it was explored again in a separate run\./);
+    assert.match(md, /✅ No violation found/);
+    const prompt = readFileSync(join(project, readdirSync(join(dir, "agent")).map((name) => join(".acceptance", "agent", name, "prompt.md")).filter((path) => existsSync(join(project, path))).at(-1)), "utf8");
+    assert.match(prompt, /Create or edit only `tests\/pr-2\.spec\.ts` and the property files `tests\/properties\.mjs`\./);
+    assert.match(prompt, /- `items-not-saved`: The server accepts a new item but does not keep it\./);
+    assert.match(prompt, /## Exploration\n\nThe example explorer\. You may add properties in `tests\/properties\.mjs`/);
+  } finally {
+    writeFileSync(properties, original);
+    rmSync(spec, { force: true });
+  }
+});
+
+test("the writer undoes an agent's change outside the spec and its property files, and fails", () => {
+  const dir = join(project, ".acceptance");
+  mkdirSync(dir, { recursive: true });
+  const server = join(project, "app", "server.mjs");
+  const before = readFileSync(server, "utf8");
+  const agent = join(dir, "fake-trespasser.mjs");
+  writeFileSync(agent, `#!/usr/bin/env node
+import { appendFileSync, writeFileSync } from "node:fs";
+writeFileSync("tests/pr-3.spec.ts", "// a spec\\n");
+appendFileSync("app/server.mjs", "// changed by the agent\\n");
+writeFileSync("explore/new.mjs", "// outside the spec folder\\n");
+console.log(JSON.stringify({ type: "result", subtype: "success", is_error: false, num_turns: 2, total_cost_usd: 0.1, result: "done" }));
+`);
+  chmodSync(agent, 0o755);
+  writeFileSync(join(dir, "body3.md"), "## Acceptance criteria\n\n- Anything\n");
+  const script = `import { write } from ${JSON.stringify(join(packageRoot, "src/write.mjs"))};
+const r = await write({ body: ".acceptance/body3.md", spec: "tests/pr-3.spec.ts", base: ${JSON.stringify(before_)}, agent: ${JSON.stringify(agent)} });
+process.exitCode = r.code;`;
+  try {
+    const run = spawnSync(process.execPath, ["--input-type=module", "-e", script], { cwd: project, encoding: "utf8", timeout: 240_000 });
+    assert.equal(run.status, 1, run.stdout + run.stderr);
+    assert.match(run.stderr, /The agent changed files outside tests\/pr-3\.spec\.ts, which were undone: (app\/server\.mjs, explore\/new\.mjs|explore\/new\.mjs, app\/server\.mjs)/);
+    assert.equal(readFileSync(server, "utf8"), before);
+    assert.equal(existsSync(join(project, "explore", "new.mjs")), false);
+  } finally {
+    rmSync(join(project, "tests", "pr-3.spec.ts"), { force: true });
+  }
 });
 
 test("propose writes a comment-ready proposal, and stops early when nothing visible changed", () => {

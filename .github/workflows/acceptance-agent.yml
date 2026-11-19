@@ -105,8 +105,11 @@ jobs:
           --max-budget-usd=${{ inputs.max-budget-usd }} ${MODEL:+--model=$MODEL}
       - name: Commit the spec to the pull request
         if: steps.write.outputs.spec != ''
+        env:
+          FILES: ${{ steps.write.outputs.files || steps.write.outputs.spec }}
         run: |
-          git add "${{ steps.write.outputs.spec }}"
+          # The spec, and any property file in the spec folder that the agent changed.
+          git add -- $FILES
           if git diff --cached --quiet; then exit 0; fi
           git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
             commit -m "test: add acceptance tests written from the pull request criteria"

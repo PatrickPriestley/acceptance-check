@@ -27,8 +27,8 @@ Use each one, character for character, as its test title:
 ## Rules
 
 - Your task is the tests only. Other checks run separately on every pull request, and you are not allowed to run them here, so do not try.
-- Create or edit only `{{SPEC}}`. Do not change application code, other specs, the fixtures, the config or any script. Changes to other files are discarded and fail the run.
-- Write exactly one test per criterion and no others.
+- Create or edit only `{{SPEC}}`{{EXPLORE_FILES}}. Do not change application code, other specs, the fixtures, the config or any script. Changes to other files are discarded and fail the run.
+- Write exactly one test per criterion and no others, except the one replay test for a new exploration violation described under Exploration.
 - Tag `@new` for behaviour this change introduces and `@holds` for behaviour that must keep working. Decide from the diff, not from which tag passes.
 - A `@holds` test passes on both sides, so nothing yet shows it can fail. For each one, name the break below that should make it fail: `annotation: { type: "catches", description: "<break name>" }` (an array of annotations when it also has another). The check applies that break to a copy of this change, and the test must fail there; "Weak" means it did not, so strengthen the assertion. Name a break only if the test really should catch it. If none fits, name none and say in your report which break the config could add.
 - Assert what the criterion promises and a user or the server can observe.
@@ -40,7 +40,7 @@ Use each one, character for character, as its test title:
 - "Not proven: also passes on base": strengthen the assertion so it observes what the change adds. Never retag the test `@holds` to get a pass.
 - Run the check at most {{MAX_RUNS}} times.
 
-## Finish
+{{EXPLORE}}## Finish
 
 End with a short report, as plain text:
 
@@ -48,3 +48,4 @@ End with a short report, as plain text:
 - Any criterion you marked unverifiable, and why.
 - For each `@holds` test, the break it names and its result, or the break the config could add.
 - Any finding: a criterion the change does not meet.
+- Exploration, if this app has it: the property you added or changed (or why none), and what the explorer found.

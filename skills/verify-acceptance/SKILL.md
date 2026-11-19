@@ -45,6 +45,8 @@ Add `--criteria=<file.json>`, a JSON list of the criteria, to have every criteri
 | 2 | A criterion is not met, regressed, not proven or untagged |
 | 1 | The harness failed: build, start-up or Playwright error |
 
+When the config has `explore`, also run `acceptance-check explore --base=<base>` for a change to state a user can see. A new violation is a finding: replay the trace as a test before fixing anything.
+
 ## 4. Read the verdicts
 
 | Verdict | What to do |

@@ -99,6 +99,11 @@ export default {
   playwrightConfig: undefined,            // optional; a built-in one is used otherwise
   outputDir: ".acceptance",               // optional
   report: { setting: "with test data", limits: "" },
+  explore: {                              // optional; see Exploration
+    command: ["node", "scripts/explore.mjs", "{url}", "{output}"],
+    properties: ["tests/acceptance/properties.ts"],
+    description: "Bombadil explores the Shop page",
+  },
   breaks: [                               // optional; see Break check
     { name: "items-not-saved", description: "The server drops new items.",
       file: "src/items.js", find: "items.push(item);", replace: "" },
@@ -123,6 +128,20 @@ A `@new` test proves itself: it has to fail on the base. A `@holds` test passes 
 | Unknown break | The test names a break the config does not have |
 
 A weak or unknown result exits 2. A `@holds` test that names no break is listed in the report but does not fail the run. The find text must occur exactly once in its file; when the code moves on, `verify` says which break to update. Each break costs one build and one run of its tests, so a few well-chosen breaks go a long way. `--no-breaks` skips the check.
+
+## Exploration
+
+Tests check the paths someone thought of. A property-based explorer, such as [Bombadil](https://github.com/antithesishq/bombadil), checks promises that must hold after any sequence of actions, by acting on the running app at random. `acceptance-check explore` runs the config's explorer against an isolated copy of this change, with `{url}` and `{output}` filled in, and against the base too when it finds something:
+
+| Result | Meaning | Exit |
+|---|---|---|
+| No violation found | Nothing this time. Exploration is random, so this is evidence, not proof | 0 |
+| New violation | Found on this change and not on the base | 2 |
+| Violation also on the base | Not caused by this change | 0 |
+
+The explorer command exits 0 when no property was violated. It runs in the project root, so it uses this checkout's properties against both copies.
+
+`explore.properties` lists the files the agent may add properties to, and they must be inside `specDir`: the agent may write nowhere else, so the explorer's own entry file imports them. When the config has `explore`, the test-writing agent may add a property for state the change makes visible, run the explorer, and turn a new violation into a test that replays it, titled "Found by exploration: ...". A property it changed is explored again in a separate run, and the result is added to the report.
 
 ## Run it on pull requests
 

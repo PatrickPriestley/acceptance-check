@@ -13,6 +13,12 @@ export default {
   specDir: "tests",
   notes: "notes.md",
   report: { setting: "with an empty list" },
+  // A property-based explorer, run against each copy by `acceptance-check explore`.
+  explore: {
+    command: ["node", "explore/run.mjs", "{url}", "{output}"],
+    properties: ["tests/properties.mjs"],
+    description: "The example explorer",
+  },
   // Deliberate faults for the break check. A @holds test names the one it should catch.
   breaks: [
     {
