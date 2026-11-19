@@ -2,7 +2,8 @@
 /** @type {import("../src/config.mjs").AcceptanceConfig} */
 export default {
   install: ["node", "-e", ""],
-  build: ["node", "-e", ""],
+  // Checks that the server parses, so a broken edit fails like a real build would.
+  build: ["node", "--check", "app/server.mjs"],
   buildOutputs: ["app/server.mjs"],
   sources: ["app"],
   start: {
@@ -27,6 +28,13 @@ export default {
       file: "app/server.mjs",
       find: 'items.push(String(JSON.parse(body).name ?? ""));',
       replace: "JSON.parse(body);",
+    },
+    {
+      name: "does-not-build",
+      description: "A deliberately invalid edit, for the engine's own tests.",
+      file: "app/server.mjs",
+      find: "let items = [];",
+      replace: "let items = [;",
     },
   ],
 };

@@ -156,9 +156,17 @@ export async function verify(options) {
       if (found !== 1) throw new Error(`Break ${name}: ${fault.file} must contain its find text exactly once, but contains it ${found} times. Update breaks in acceptance.config.mjs.`);
       writeFileSync(file, original.replace(fault.find, () => fault.replace));
       let results;
+      const buildLog = join(run, "breaks", `${name}-build.log`);
       try {
-        await step(`Building with break ${name}`, config.build, { cwd: tree, logFile: join(run, "breaks", `${name}-build.log`) });
+        await step(`Building with break ${name}`, config.build, { cwd: tree, logFile: buildLog });
         results = await checkSide(`break-${name}`, tree, [...new Set(tests.map((test) => join(config.specDir, test.file)))]);
+      } catch (error) {
+        // A break that does not build is a fault in the config, not in a test.
+        // Report it and carry on, so one bad break does not hide the others.
+        if (!String(error.message).startsWith(`Building with break ${name} failed`)) throw error;
+        log(`Break ${name} does not build. See ${shown(buildLog)}`);
+        rows.push(...tests.map((test) => ({ test, name, outcome: "unbuildable" })));
+        continue;
       } finally {
         writeFileSync(file, original);
       }
@@ -475,6 +483,7 @@ export const BREAK_OUTCOMES = {
   skipped: { ok: false, status: "Skipped", label: "Not checked: skipped with the break" },
   missing: { ok: false, status: "Not run", label: "Not checked: did not run with the break" },
   unknown: { ok: false, status: "Not run", label: "Unknown break: not in the config" },
+  unbuildable: { ok: false, status: "Not run", label: "Break does not build: fix it in the config" },
 };
 
 const cell = (text) => String(text).replace(/\|/g, "\\|").replace(/\n/g, " ");

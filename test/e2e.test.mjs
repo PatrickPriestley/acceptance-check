@@ -70,6 +70,10 @@ test("The page shows an Add button", { tag: "@holds", annotation: { type: "catch
   await page.goto("/");
   await expect(page.getByRole("button", { name: "Add" })).toBeVisible();
 });
+test("The page shows a list heading", { tag: "@holds", annotation: { type: "catches", description: "does-not-build" } }, async ({ page }) => {
+  await page.goto("/");
+  await expect(page.getByRole("status")).toHaveText("0 items");
+});
 `);
   try {
     const run = cli("verify", `--base=${before_}`, "--skip-build", "tests/weak.spec.ts");
@@ -78,6 +82,7 @@ test("The page shows an Add button", { tag: "@holds", annotation: { type: "catch
     assert.match(md, /\| The page shows a heading \| Must still hold \| Pass \| Pass \| ✅ Still holds \|/);
     assert.match(md, /\| The page shows a heading \| `items-not-saved` \| Pass \| ❌ Weak: still passes with the break \|/);
     assert.match(md, /\| The page shows an Add button \| `no-such-break` \| Not run \| ❌ Unknown break: not in the config \|/);
+    assert.match(md, /\| The page shows a list heading \| `does-not-build` \| Not run \| ❌ Break does not build: fix it in the config \|/);
     const skipped = cli("verify", `--base=${before_}`, "--skip-build", "--no-breaks", "tests/weak.spec.ts");
     assert.equal(skipped.status, 0, skipped.stdout + skipped.stderr);
     assert.doesNotMatch(report(skipped.stdout), /Break check/);
