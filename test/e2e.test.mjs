@@ -2,7 +2,7 @@
 // commits: the app before the fix, and after it. Needs Chromium for Playwright.
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { after, before, test } from "node:test";
 import { fileURLToPath } from "node:url";
@@ -85,6 +85,25 @@ test("specs lists the changed specs, and every spec only when asked and none cha
   assert.deepEqual(lines(added), ["tests/blank-name.spec.ts", "tests/item-count.spec.ts"]);
   assert.equal(added.stderr, "");
   assert.equal(cli("specs").status, 1);
+});
+
+test("an agent that could not run is reported with its own words, not as a missing spec", () => {
+  // Claude Code without a usable key still ends with a result event, marked as an error.
+  const dir = join(project, ".acceptance");
+  mkdirSync(dir, { recursive: true });
+  const agent = join(dir, "fake-agent.mjs");
+  writeFileSync(agent, `#!/usr/bin/env node
+console.log(JSON.stringify({ type: "result", subtype: "success", is_error: true, num_turns: 1, total_cost_usd: 0, result: "Invalid API key · Please run /login" }));
+`);
+  chmodSync(agent, 0o755);
+  writeFileSync(join(dir, "body.md"), "## Acceptance criteria\n\n- The list shows how many items there are\n");
+  const script = `import { write } from ${JSON.stringify(join(packageRoot, "src/write.mjs"))};
+const r = await write({ body: ".acceptance/body.md", spec: "tests/pr-1.spec.ts", base: ${JSON.stringify(before_)}, agent: ${JSON.stringify(agent)} });
+process.exitCode = r.code;`;
+  const run = spawnSync(process.execPath, ["--input-type=module", "-e", script], { cwd: project, encoding: "utf8", timeout: 240_000 });
+  assert.equal(run.status, 1, run.stdout + run.stderr);
+  assert.match(run.stderr, /The agent did not run: Invalid API key · Please run \/login\. Its log is in \.acceptance\/agent\/.+\/agent\.jsonl/);
+  assert.doesNotMatch(run.stderr, /wrote no spec/);
 });
 
 test("a missing config gives a clear error and init writes the starting files", () => {

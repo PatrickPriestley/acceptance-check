@@ -40,7 +40,7 @@ The plugin carries the skills only. Each app still needs the npm package (below)
 ## Set up an app
 
 ```bash
-npm install --save-dev github:PatrickPriestley/acceptance-check#v0.4.0 @playwright/test
+npm install --save-dev github:PatrickPriestley/acceptance-check#v0.4.1 @playwright/test
 npx playwright install chromium
 npx acceptance-check init
 ```
@@ -118,7 +118,7 @@ permissions:
   pull-requests: write
 jobs:
   acceptance:
-    uses: PatrickPriestley/acceptance-check/.github/workflows/acceptance.yml@v0.4.0
+    uses: PatrickPriestley/acceptance-check/.github/workflows/acceptance.yml@v0.4.1
 ```
 
 It checks the specs the pull request adds or changes against the pull request's base, uploads the videos and traces, and keeps one comment on the pull request up to date. When the description has an `## Acceptance criteria` list, every criterion is reported, including those without a test. An `Acceptance base: <commit hash>` line in the description compares against another commit.
@@ -137,12 +137,12 @@ permissions:
   pull-requests: write
 jobs:
   write:
-    uses: PatrickPriestley/acceptance-check/.github/workflows/acceptance-agent.yml@v0.4.0
+    uses: PatrickPriestley/acceptance-check/.github/workflows/acceptance-agent.yml@v0.4.1
     secrets:
       anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
 ```
 
-Adding the `write-acceptance-tests` label runs it. It writes `tests/acceptance/pr-<number>.spec.ts`, commits it to the pull request branch, posts the verdicts and removes the label. A commit that a workflow pushes does not start other workflows, so its comment is the result for that commit.
+Adding the `write-acceptance-tests` label runs it. It writes `tests/acceptance/pr-<number>.spec.ts`, commits it to the pull request branch, posts the verdicts and removes the label. After the pull request merges, retag its `@new` tests `@holds` and rename the file after the feature it covers. A commit that a workflow pushes does not start other workflows, so its comment is the result for that commit.
 
 | Input | Default | Use |
 |---|---|---|
