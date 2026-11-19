@@ -29,7 +29,7 @@ export const CONFIG_FILE = "acceptance.config.mjs";
  * @typedef {object} Explore
  * @property {string[]} command Runs the explorer against one running copy. `{url}` is the copy's origin and
  *   `{output}` a fresh folder for its trace. It runs in the project root, so it uses this checkout's properties.
- *   Exit 0 means no property was violated; anything else is reported as a violation, with the log.
+ *   Exit 0 means no property was violated, 2 that one was. Any other exit means the explorer failed, which fails the run.
  * @property {string[]} properties Files that hold the properties the agent may add to. They must be inside
  *   `specDir`, because the agent may write nowhere else; the explorer's own entry file can import them.
  * @property {string} [description] What the explorer checks, for people and the agent.

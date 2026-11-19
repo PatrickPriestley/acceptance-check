@@ -140,7 +140,7 @@ Tests check the paths someone thought of. A property-based explorer, such as [Bo
 | New violation | Found on this change and not on the base | 2 |
 | Violation also on the base | Not caused by this change | 0 |
 
-The explorer command exits 0 when no property was violated. It runs in the project root, so it uses this checkout's properties against both copies.
+The explorer command exits 0 when no property was violated and 2 when one was, as Bombadil does. Any other exit means the explorer itself failed, and the run fails with its log: a broken explorer never reads as a pass. It runs in the project root, so it uses this checkout's properties against both copies.
 
 `explore.properties` lists the files the agent may add properties to, and they must be inside `specDir`: the agent may write nowhere else, so the explorer's own entry file imports them. When the config has `explore`, the test-writing agent may add a property for state the change makes visible, run the explorer, and turn a new violation into a test that replays it, titled "Found by exploration: ...". A property it changed is explored again in a separate run, and the result is added to the report.
 

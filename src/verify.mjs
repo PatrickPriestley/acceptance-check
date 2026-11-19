@@ -205,12 +205,15 @@ export async function verify(options) {
     app.kill("SIGTERM");
     await app.exited;
     const tail = existsSync(logFile) ? readFileSync(logFile, "utf8").replace(/\u001b\[[0-9;]*m/g, "").trim().split("\n").slice(-25).join("\n") : "";
+    // 0: no violation. 2: a violation. Anything else means the explorer itself
+    // failed, which must never read as a pass or as "also on the base".
+    if (code !== 0 && code !== 2) throw new Error(`The explorer failed on ${side} (exit ${code}), so nothing was explored. See ${shown(logFile)}:\n${tail.split("\n").slice(-8).join("\n")}`);
     return { code, output: join(dir, "output"), log: logFile, tail };
   }
 
   function writeExploreReport(baseSha, head, base, baseError) {
     const outcome = head.code === 0 ? EXPLORE_OUTCOMES.clear : !base ? EXPLORE_OUTCOMES.unchecked : base.code === 0 ? EXPLORE_OUTCOMES.new : EXPLORE_OUTCOMES.existing;
-    const side = (result) => (!result ? "Not run" : result.code === 0 ? "No violation" : `Violation (exit ${result.code})`);
+    const side = (result) => (!result ? "Not run" : result.code === 0 ? "No violation" : "Violation");
     const lines = [
       "<!-- acceptance-explore -->",
       "## Exploration",
@@ -374,7 +377,14 @@ export async function verify(options) {
     if (options.explore) {
       const head = await exploreSide("head", root);
       // The base runs only to tell a new violation from one that was already there.
-      const base = head.code !== 0 && !baseError ? await exploreSide("base", baseTree) : undefined;
+      let base;
+      if (head.code !== 0 && !baseError) {
+        try {
+          base = await exploreSide("base", baseTree);
+        } catch (error) {
+          baseError = error.message;
+        }
+      }
       const { file, outcome } = writeExploreReport(baseSha, head, base, baseError);
       reportFile = file;
       console.log("");

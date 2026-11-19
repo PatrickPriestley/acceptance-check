@@ -1,6 +1,6 @@
 // A tiny property-based explorer for the example app, standing in for a real one
 // such as Bombadil. It runs every property in tests/properties.mjs a few times against
-// the copy at the URL it is given, and exits 1 on the first violation.
+// the copy at the URL it is given, and exits 2 on the first violation, as Bombadil does.
 // Usage: node explore/run.mjs <url> <output folder>
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -15,7 +15,7 @@ for (let round = 1; round <= 3; round++) {
     if (!ok) {
       writeFileSync(join(output, "trace.json"), JSON.stringify(trace, null, 2));
       console.log(`Violation: ${name} (round ${round})`);
-      process.exit(1);
+      process.exit(2);
     }
   }
 }

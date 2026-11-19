@@ -156,13 +156,19 @@ test("explore reports no violation, a new one, and one the base has too", () => 
     const fresh = cli("explore", `--base=${before_}`, "--skip-build");
     assert.equal(fresh.status, 2, fresh.stdout + fresh.stderr);
     const freshReport = report(fresh.stdout);
-    assert.match(freshReport, /\| Violation \(exit 1\) \| No violation \| ❌ New violation: found on this change, not on the base \|/);
+    assert.match(freshReport, /\| Violation \| No violation \| ❌ New violation: found on this change, not on the base \|/);
     assert.match(freshReport, /Violation: noBlankCheck \(round 1\)/);
 
     withProperty(`  async neverHolds() { return false; },`);
     const existing = cli("explore", `--base=${before_}`, "--skip-build");
     assert.equal(existing.status, 0, existing.stdout + existing.stderr);
-    assert.match(report(existing.stdout), /\| Violation \(exit 1\) \| Violation \(exit 1\) \| ⚠️ Violation also on the base: not caused by this change \|/);
+    assert.match(report(existing.stdout), /\| Violation \| Violation \| ⚠️ Violation also on the base: not caused by this change \|/);
+
+    // An explorer that cannot even start (here a property that throws on import) fails the run.
+    withProperty(`  broken: (() => { throw new Error("cannot load"); })(),`);
+    const broken = cli("explore", `--base=${before_}`, "--skip-build");
+    assert.equal(broken.status, 1, broken.stdout + broken.stderr);
+    assert.match(broken.stderr, /The explorer failed on head \(exit 1\), so nothing was explored/);
   } finally {
     writeFileSync(properties, original);
   }
