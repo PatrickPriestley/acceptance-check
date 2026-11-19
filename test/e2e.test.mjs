@@ -41,14 +41,14 @@ const report = (output) => {
 };
 
 test("a fix is met against the base before it, and the other criterion still holds", () => {
-  const run = cli("verify", `--base=${before_}`, "tests/blank-name.spec.ts");
+  const run = cli("verify", `--base=${before_}`, "tests/blank-name.spec.ts", "tests/list.spec.ts");
   assert.equal(run.status, 0, run.stdout + run.stderr);
   const md = report(run.stdout);
   assert.match(md, /A blank name shows "Enter a name for the item\." and saves nothing \| New \| Fail \| Pass \| ✅ Met/);
   assert.match(md, /A real name is trimmed and added to the list \| Must still hold \| Pass \| Pass \| ✅ Still holds/);
   assert.match(md, new RegExp(`base \`${before_.slice(0, 7)}\`, with an empty list`));
   assert.match(md, /### Break check/);
-  assert.match(md, /\| A real name is trimmed and added to the list \| `items-not-saved` \| Fail \| ✅ Caught \|/);
+  assert.match(md, /\| An added item stays on the list after a reload \| `items-not-saved` \| Fail \| ✅ Caught \|/);
   const run2 = run.stdout.match(/Run folder (\S+)/)[1];
   assert.ok(existsSync(join(project, run2, "head/results")), "evidence was kept");
 });
@@ -111,12 +111,12 @@ test("specs lists the changed specs, and every spec only when asked and none cha
   // The second commit changes the app, not a spec.
   assert.deepEqual(lines(cli("specs", `--base=${before_}`)), []);
   const all = cli("specs", `--base=${before_}`, "--all-when-none");
-  assert.deepEqual(lines(all), ["tests/blank-name.spec.ts", "tests/item-count.spec.ts"]);
-  assert.match(all.stderr, /No spec changed since .*; checking all 2\./);
+  assert.deepEqual(lines(all), ["tests/blank-name.spec.ts", "tests/item-count.spec.ts", "tests/list.spec.ts"]);
+  assert.match(all.stderr, /No spec changed since .*; checking all 3\./);
   // Against the empty tree every spec is new, so --all-when-none changes nothing.
   const emptyTree = git("hash-object", "-t", "tree", "/dev/null");
   const added = cli("specs", `--base=${emptyTree}`, "--all-when-none");
-  assert.deepEqual(lines(added), ["tests/blank-name.spec.ts", "tests/item-count.spec.ts"]);
+  assert.deepEqual(lines(added), ["tests/blank-name.spec.ts", "tests/item-count.spec.ts", "tests/list.spec.ts"]);
   assert.equal(added.stderr, "");
   assert.equal(cli("specs").status, 1);
 });

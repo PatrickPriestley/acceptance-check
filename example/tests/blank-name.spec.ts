@@ -11,7 +11,7 @@ test('A blank name shows "Enter a name for the item." and saves nothing', { tag:
   expect(await (await request.get("/api/items")).json()).toEqual([]);
 });
 
-test("A real name is trimmed and added to the list", { tag: "@holds", annotation: { type: "catches", description: "items-not-saved" } }, async ({ page }) => {
+test("A real name is trimmed and added to the list", { tag: "@holds" }, async ({ page }) => {
   await page.goto("/");
   const form = page.getByRole("form", { name: "Add item" });
   await form.getByLabel("Item name").fill("  Coffee ");
