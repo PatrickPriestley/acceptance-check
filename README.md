@@ -142,7 +142,7 @@ jobs:
       anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
 ```
 
-Adding the `write-acceptance-tests` label runs it. It writes `tests/acceptance/pr-<number>.spec.ts`, commits it to the pull request branch, posts the verdicts and removes the label. A commit that a workflow pushes does not start other workflows, so its comment is the result for that commit.
+Adding the `write-acceptance-tests` label runs it. It writes `tests/acceptance/pr-<number>.spec.ts`, commits it to the pull request branch, posts the verdicts and removes the label. After the pull request merges, retag its `@new` tests `@holds` and rename the file after the feature it covers. A commit that a workflow pushes does not start other workflows, so its comment is the result for that commit.
 
 | Input | Default | Use |
 |---|---|---|
